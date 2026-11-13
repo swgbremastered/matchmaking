@@ -1,0 +1,169 @@
+# SWGB matchmaking server
+
+The matchmaking, lobby and ladder server for the game client of the Star Wars: Galactic Battlegrounds remaster, in the
+style of Golden Age's built-in matchmaking: accounts, Elo ratings and profiles, ranked and unranked queues (1v1, team,
+FFA) with a map pool by category and per-map toggles, a weekly queue, an open-game lobby browser with a minimum /
+maximum rating per room and lobby chat, friends, parties, direct messages, match history with replays, and connection
+brokering for the game itself.
+
+It is a fork of the server side of [Empire League](https://github.com/ForgeableSum/empire-league) by ForgeableSum
+(MIT licence), used with its author's permission.
+
+## Features
+
+- **Accounts and ratings**: local accounts (a name and a scrypt-hashed password), separate Elo pools for solo, team
+  and FFA, divisions, a leaderboard per pool, profiles with recent matches.
+- **Queues**: ranked and unranked 1v1, team and FFA queues, widening rating ranges, a balanced team split, a map pool
+  by group with per-map toggles and favourites, a weekly rotating queue, accept / decline with a cooldown.
+- **Lobbies**: open games with a rating window, chat, ready marks, civilisations, teams and host settings.
+- **Social**: friends with presence, direct messages (kept for offline players), parties that queue together.
+- **Brokering**: a direct connection, then a UDP hole punch, then a TCP relay, whichever comes up first.
+- **Results**: reports from every player, corroboration, contested results, FFA placings, stored replays.
+- **Hosting**: TLS on the control link with certificate reload, abuse limits, replay retention, JSON-line logs, a
+  health check, online backups, a container image.
+
+## Credit and licence
+
+This server is a fork of the server side of **Empire League** by **ForgeableSum**
+(<https://github.com/ForgeableSum/empire-league>, commit `32353bc`, MIT licence), used with its author's permission.
+Taken from it: the queue and match flow (tickets, match found, accept / decline with a cooldown, match start), the
+widening rating ranges, the balanced team split, the map pool by group with favourites, the weekly FFA grouping, the
+custom lobbies, the Elo rule (K = 32, team averages), separate rating pools, divisions, and the result reports with
+corroboration. Left out, as Age of Empires II: DE specific: Steam sign-in, the AoE2 lobby automation, replay parsing,
+civilisation rolls, tournaments, Discord, Twitch and the Electron client. MySQL is replaced by a local SQLite file
+(`node:sqlite`). The Empire League name and logos are not used.
+
+This repository is MIT licensed ([`LICENSE`](LICENSE)). Empire League's licence notice is kept in
+[`LICENSE.empire-league`](LICENSE.empire-league); files adapted from it say so at the top.
+
+## Requirements
+
+- Node.js 22.13 or later.
+- No npm dependencies: there is nothing to `npm install`.
+
+## Running locally
+
+```
+node src/server.mjs                       # 127.0.0.1:4317, data/matchmaking.db
+node src/server.mjs --port 4400 --db build/mm.db --min-queue-ms 0 --test-maps
+node src/cli.mjs profile NAME             # look at a running server: profile, leaderboard [solo|team|ffa], rooms, maps
+```
+
+Options: `--config FILE`, `--host` (default 127.0.0.1), `--port` (TCP and the same number on UDP), `--db`,
+`--min-queue-ms` (15000), `--ffa-players` (4), `--accept-ms` (30000), `--corroboration-ms` (60000), `--test-maps`
+(adds a "Test" map group for automated runs), `--tls-cert FILE --tls-key FILE`, `--no-health`, `--health-host`,
+`--health-port`.
+
+**It binds to 127.0.0.1 by default.** Opening it to other machines (`--host 0.0.0.0`, firewall rules, a public
+address) is up to you; see [`HOSTING.md`](HOSTING.md).
+
+In the game client: the main menu's **Online** button. The client has a built-in default server; the **Server** field
+on the log-in screen or `--mm-server HOST:PORT` points it at another one.
+
+## Configuration
+
+Every option can be set in a JSON config file (`--config FILE` or the `SWGB_MM_CONFIG` environment variable); the
+command line wins. [`config.example.json`](config.example.json) lists every option and is the container's built-in
+config; defaults are in `src/config.mjs`. A config file may give any subset: objects merge key by key with the
+defaults, and an unknown key is an error.
+
+- **TLS on the control link** (`tls.enabled`, `tls.cert` / `tls.key`): a connection that starts with a TLS handshake is
+  wrapped; any other may only open a relay (the game's own frames; a log-in over plain TCP is refused). The certificate
+  files are checked every `tls.reloadSeconds` and a changed pair is used by new connections (no restart after a
+  renewal; a pair that does not load keeps the old one). The game client checks the certificate against the Windows
+  roots (or `--mm-ca FILE`) and the host name; it speaks plain TCP only to the local computer (`localhost`, `127.x`).
+- **Abuse limits** (`limits`, `accounts`, `messages`): connections in all and per address, the message size, a log-in
+  deadline, messages per second per connection, log-in attempts per minute and new accounts per hour per address, a
+  lock-out of an account name after failed log-ins, a chat rate per player (lobby, party, direct messages), datagrams
+  per second per address, relay tokens waiting; name rules (length, characters, reserved names), password length, an
+  account cap.
+- **Replays**: a size cap (`replays.maxBytes`) and retention (`replays.retentionDays`, swept every
+  `replays.sweepMinutes`, with the expired sessions).
+- **Logs**: JSON lines on stdout (`log.level`); never a password or a token.
+- **Health check**: `GET /health` on `health.host:health.port` (127.0.0.1:4318), the status as JSON, 503 when the
+  database, the listener or the certificate is not fine.
+- **Backups**: `node src/backup.mjs [DB] OUT` makes a consistent copy while the server runs.
+
+## Tests
+
+```
+npm test
+```
+
+The tests run over real sockets on 127.0.0.1 only. TLS tests use a certificate made at test time by
+`test/selfsigned.mjs` (no key is committed). `test/tls_echo.mjs` is a small TLS line server for testing a client's TLS
+code.
+
+## Container image
+
+`ghcr.io/swgbremastered/matchmaking`, built and published by GitHub Actions
+([`.github/workflows/image.yml`](.github/workflows/image.yml)) on every push to `main` after the tests and a
+start-and-health-check smoke test. Tags are `<package.json version>-<8-char commit>` (for example `0.2.0-1a2b3c4d`),
+plus a moving `main` tag. Deploy an exact tag, never `main` or `latest`. `scripts/publish-image.sh` builds (and with
+`--push` publishes) the same image by hand. See [`HOSTING.md`](HOSTING.md) for running it.
+
+## How a ranked game comes about
+
+1. The game client logs in (`register` / `login`: a name and a password, scrypt-hashed in the local database) and gets
+   its profile (a rating per pool: solo, team, FFA; peak, wins, losses, streak, division, rank; recent matches).
+2. `queue_join` with the queue (`1v1`, `team` with team sizes, `ffa`) and the map pool (enabled groups, the maps
+   toggled on, favourites). The service matches tickets whose ratings are within each other's range (1v1: 50, widening
+   to 250 over 90 s; team 100 to 500; FFA twice the team range), who share a map; closest rating first.
+3. `match_found` to every player; each answers `accept` or `decline` within 30 s. When all accept: `match_start` with
+   the map, the seed, the players and slots (the first to queue hosts, slot 1).
+4. Brokering: the host listens and sends `host_addr`; each guest gets `connect` and tries a **direct** TCP connection;
+   failing that, `punch_request`: both register a UDP socket with the rendezvous (`{"t":"reg","token","slot"}` to the
+   service's UDP port), learn each other's address and **punch**; failing that, `relay_request`: both open a TCP
+   connection to the service whose first line is `{"t":"relay","token","slot"}`, and the service **relays** the bytes.
+   The game itself runs its own multiplayer lockstep protocol over the link.
+5. Each peer reports `result`: `winners` (slots) at its game's end, or `resigned` when it leaves. Agreeing reports from
+   every player still connected settle the match (else the first report after the corroboration time); conflicting
+   reports make it contested (no rating change). The service answers `result_recorded` with every rating change.
+
+Open games: `rooms`, `room_create` (name, minElo, maxElo, maxPlayers, map, pool, ranked), `room_join` (refused outside
+the room's rating window), `room_chat`, `room_ready`, `room_leave`, `room_start` (the host, when everyone is ready).
+
+## More features
+
+- **Unranked queues** beside the ranked ones: `queue_join` with `ranked: false` (1v1 / team / FFA): the same matching
+  and map pool in a lane of their own, paired by a hidden casual rating per format (pools `casual_solo`, `casual_team`,
+  `casual_ffa`: never on a profile or a leaderboard); the result changes no shown rating and is kept in the history.
+- **Weekly queue**: `queue_join` with `queue: "weekly"`: this ISO week's format and map pool (`src/weekly.mjs`,
+  rotation index = weeks since 2026-01-05), unranked, the week kept with the match. `weekly` (and `maps`) say which.
+- **Friends**: `friend_add` / `friend_accept` / `friend_remove` (`name`), `friends` -> `friends {friends: [{name, state:
+  friend|incoming|outgoing, presence}]}`, `friend_request {from}`.
+- **Presence** (`offline`, `idle`, `looking`, `in_lobby`, `in_game`): pushed to friends and party members as
+  `presence {name, presence}` whenever it changes; `presence {name}` asks.
+- **Direct messages**: `dm {to, text}` (a friend or a party member) -> `dm {from, to, text, at}` both ways; kept for an
+  offline player and delivered at log-in (`offline: true`); `dm_history {with}`.
+- **Parties**: `party_invite {name}` (the leader; makes the party), `party_invite {party, from}` to the invitee,
+  `party_accept` / `party_decline {party}`, `party_leave`, `party_chat {text}` -> `party_chat {from, text}`,
+  `party_set {civ}`, `party {party: {id, leader, members, invited, messages}}`. The leader's `queue_join` (team queue)
+  queues the whole party as one ticket: its members land on one team; a member leaving takes the ticket out; a party
+  member's decline keeps the party together (no cooldown among its own members). Offline members stay in the party.
+- **Match history and replays**: `history {name?}` -> every match with its players, outcomes, shown ratings and whether
+  a replay is kept. The game client records its replay of a matchmade game and sends it at the game's end:
+  `replay_chunk {match, offset, data (base64), last}` (players of the match only; the longest is kept) ->
+  `replay_stored`; `replay_get {match}` -> `replay_chunk` messages to anyone logged in.
+- **Lobbies**: a civilisation per player (`civ` on `room_create` / `room_join`, `room_set {civ, team}`), the host's
+  settings (`room_settings {map, popCap, startAge, reveal}`); `match_start` carries `players[].civ` and `settings`.
+- **FFA placings**: a result may carry `places {slot: place}`; the FFA rating is pairwise by place.
+- **The control link comes back**: `resume {token}` during a running match: the player is no longer counted as gone
+  (`match_resumed`), its report counts again.
+
+## Protocol
+
+Newline-delimited JSON on the TCP port; every message has `t`. Requests: `hello`, `register`, `login`, `resume`,
+`profile` (`name` optional), `leaderboard` (`pool`), `maps`, `weekly`, `queue_join`, `queue_leave`, `accept`,
+`decline`, `rooms`, `room_create`, `room_join`, `room_leave`, `room_chat`, `room_ready`, `room_start`, `room_set`,
+`room_settings`, `friends`, `friend_add`, `friend_accept`, `friend_remove`, `dm`, `dm_history`, `presence`,
+`party_invite`, `party_accept`, `party_decline`, `party_leave`, `party_chat`, `party_set`, `history`, `replay_chunk`,
+`replay_get`, `host_addr`, `punch_request`, `relay_request`, `link`, `result`. Events: `welcome`, `auth`, `profile`,
+`leaderboard`, `maps`, `weekly`, `queue`, `match_found`, `match_accepted`, `match_cancelled`, `match_start`,
+`match_resumed`, `connect`, `punch`, `relay`, `rooms`, `room`, `chat`, `friends`, `friend_request`, `presence`, `dm`,
+`dm_history`, `party`, `party_invite`, `party_invite_closed`, `party_chat`, `history`, `replay_chunk`,
+`replay_stored`, `result_recorded`, `error`.
+
+A connection whose first line is `{"t":"relay","token":...}` becomes a byte pipe to its partner. On the UDP port the
+rendezvous takes `{"t":"reg","token","slot"}` and answers `{"t":"wait"}` until both sides are there, then
+`{"t":"peer","ip","port"}` to each.

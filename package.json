@@ -1,0 +1,13 @@
+{
+  "name": "swgb-matchmaking",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Matchmaking, lobby and ladder server for the SWGB remaster's game client; a fork of Empire League's server (MIT, see LICENSE.empire-league)",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test --test-force-exit test/elo.test.mjs test/queue.test.mjs test/server.test.mjs test/golden.test.mjs test/host.test.mjs"
+  }
+}

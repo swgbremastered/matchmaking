@@ -1,0 +1,56 @@
+name: image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag
+        id: tag
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "image=ghcr.io/swgbremastered/matchmaking:${VERSION}-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: docker build --pull --platform linux/amd64 -t "${{ steps.tag.outputs.image }}" .
+
+      - name: Smoke test
+        run: |
+          CID=$(docker run -d -e SWGB_MM_CONFIG= "${{ steps.tag.outputs.image }}" node src/server.mjs --db /data/smoke.db)
+          OK=0
+          for _ in $(seq 1 20); do
+            if docker exec "$CID" wget -q -O - http://127.0.0.1:4318/health 2> /dev/null | grep -q '"ok":true'; then OK=1; break; fi
+            sleep 1
+          done
+          docker logs "$CID"
+          docker rm -f "$CID" > /dev/null
+          [ "$OK" = 1 ] || { echo "the image did not answer its health check" >&2; exit 1; }
+
+      - name: Push
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$IMAGE" ghcr.io/swgbremastered/matchmaking:main
+          docker push "$IMAGE"
+          docker push ghcr.io/swgbremastered/matchmaking:main
+          echo "image: $IMAGE" >> "$GITHUB_STEP_SUMMARY"

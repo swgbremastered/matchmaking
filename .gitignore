@@ -1,0 +1,7 @@
+node_modules/
+*.db
+*.db-shm
+*.db-wal
+build/
+# test certificates (test/selfsigned.mjs OUT_DIR)
+*.pem

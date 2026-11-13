@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "note": "randomMap is the game's random map script id (54201..); names are the game's strings 10875 + (id - 54201). Groups after Empire League's maps.json (land open / land closed / water).",
+  "groups": [
+    { "id": "land-open", "name": "Land Open", "description": "Open land maps with exposed resources and room to raid." },
+    { "id": "land-closed", "name": "Land Closed", "description": "Defensible starts with time to build." },
+    { "id": "water", "name": "Water", "description": "Water and hybrid maps." },
+    { "id": "test", "name": "Test", "description": "A plain test start for automated runs; only with --test-maps.", "testOnly": true }
+  ],
+  "maps": [
+    { "id": "desert", "name": "Desert", "groupId": "land-open", "randomMap": 54201 },
+    { "id": "landmass", "name": "LandMass", "groupId": "land-open", "randomMap": 54206 },
+    { "id": "tundra", "name": "Tundra", "groupId": "land-open", "randomMap": 54217 },
+    { "id": "flats", "name": "Flats", "groupId": "land-open", "randomMap": 54218 },
+    { "id": "savannah", "name": "Savannah", "groupId": "land-open", "randomMap": 54220 },
+    { "id": "swamp", "name": "Swamp", "groupId": "land-open", "randomMap": 54219 },
+    { "id": "forest", "name": "Forest", "groupId": "land-open", "randomMap": 54204 },
+    { "id": "arena", "name": "Arena", "groupId": "land-closed", "randomMap": 54221 },
+    { "id": "fortress", "name": "Fortress", "groupId": "land-closed", "randomMap": 54208 },
+    { "id": "precipice", "name": "Precipice", "groupId": "land-closed", "randomMap": 54210 },
+    { "id": "king-of-the-hill", "name": "King of the Hill", "groupId": "land-closed", "randomMap": 54222 },
+    { "id": "motherlode", "name": "Motherlode", "groupId": "land-closed", "randomMap": 54223 },
+    { "id": "watermass", "name": "WaterMass", "groupId": "water", "randomMap": 54202 },
+    { "id": "sea", "name": "Sea", "groupId": "water", "randomMap": 54203 },
+    { "id": "shoreline", "name": "Shoreline", "groupId": "water", "randomMap": 54205 },
+    { "id": "nova-lake", "name": "Nova Lake", "groupId": "water", "randomMap": 54207 },
+    { "id": "islands", "name": "Islands", "groupId": "water", "randomMap": 54211 },
+    { "id": "rivers", "name": "Rivers", "groupId": "water", "randomMap": 54214 },
+    { "id": "team-islands", "name": "Team Islands", "groupId": "water", "randomMap": 54215 },
+    { "id": "test-arena", "name": "Test Arena", "groupId": "test", "testStart": true }
+  ]
+}

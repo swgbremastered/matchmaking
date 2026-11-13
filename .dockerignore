@@ -1,0 +1,9 @@
+# only what the Dockerfile copies goes into the build context
+*
+!package.json
+!README.md
+!LICENSE
+!LICENSE.empire-league
+!src/
+!data/maps.json
+!config.example.json

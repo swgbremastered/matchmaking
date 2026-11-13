@@ -1,0 +1,59 @@
+{
+  "host": "0.0.0.0",
+  "port": 4317,
+  "db": "/data/matchmaking.db",
+  "minQueueMs": 15000,
+  "ffaPlayers": 4,
+  "acceptMs": 30000,
+  "corroborationMs": 60000,
+  "testMaps": false,
+  "tls": {
+    "enabled": true,
+    "cert": "/certs/fullchain.pem",
+    "key": "/certs/privkey.pem",
+    "reloadSeconds": 60,
+    "minVersion": "TLSv1.2",
+    "handshakeMs": 10000
+  },
+  "health": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 4318
+  },
+  "limits": {
+    "maxConnections": 2000,
+    "maxConnectionsPerIp": 16,
+    "maxLineBytes": 65536,
+    "authTimeoutMs": 30000,
+    "messagesPerSecond": 40,
+    "loginPerIpPerMinute": 20,
+    "registerPerIpPerHour": 10,
+    "loginFailuresPerAccount": 8,
+    "loginLockoutMinutes": 15,
+    "chatPerMinute": 30,
+    "chatBurst": 8,
+    "udpPerIpPerSecond": 50,
+    "maxRelays": 500
+  },
+  "accounts": {
+    "maxAccounts": 50000,
+    "nameMin": 3,
+    "nameMax": 24,
+    "passwordMin": 8,
+    "passwordMax": 128,
+    "reservedNames": ["admin", "administrator", "root", "system", "server", "moderator", "mod", "support", "swgb",
+      "matchmaking", "official", "staff", "null", "undefined"]
+  },
+  "replays": {
+    "maxBytes": 16777216,
+    "retentionDays": 30,
+    "sweepMinutes": 60
+  },
+  "messages": {
+    "chatMax": 200,
+    "dmMax": 300
+  },
+  "log": {
+    "level": "info"
+  }
+}
