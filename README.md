@@ -28,6 +28,8 @@ It is a fork of the server side of [Empire League](https://github.com/ForgeableS
 - **Public pages**: an optional read-only listener (off by default) with leaderboards, profiles, match results,
   tournaments, as minimal HTML and as JSON.
 - **Discord**: optional webhook posts when someone waits in the ranked 1v1 queue and when a ranked 1v1 result is in.
+- **Tournaments**: single-elimination 1v1 brackets made by staff, with a registration window, an optional password and
+  rating cap, seeding by rating, server-made matches per round, walkovers and tournament chat.
 - **Hosting**: TLS on the control link with certificate reload, abuse limits, replay retention, JSON-line logs, a
   health check, online backups, a container image.
 
@@ -267,6 +269,37 @@ escaped and mentions are switched off; no address, report or moderation detail i
 `discord.perPlayerPerHour` posts name one player. Posts go out one at a time in the background with retries on 429 /
 5xx; a failure is logged (`discord_failed`) and never affects a match.
 
+## Tournaments
+
+Single elimination, 1v1. A moderator or admin creates one; players register during its window; at the window's end
+(or `tournament_start` by staff) the players are seeded by their 1v1 rating into a bracket of the next power of two
+(seed 1 meets seed 2 only in the final; byes go to the top seeds). The server offers each ready match as a
+`match_found` (with `match.tournament: {id, name, round, position}`, kind `tournament`) as soon as both players are
+online and not in another match (it takes them out of a queue or an open lobby); then `accept`, `match_start`, the
+game and the usual `result` flow. Tournament games change no rating.
+
+- An offer that is declined or not accepted in time is made again after `tournaments.retrySeconds`. A player who is not
+  there `noShowMinutes` after the match became ready loses by **walkover** to one who was (accepted an offer, or is
+  online and free); if both or neither were, the one who accepted wins, else the higher seed.
+- A **contested** result makes the match `disputed`; staff online get `tournament_disputed {id, round, position,
+  match}` and settle it with `tournament_set_winner`.
+- Requests: `tournaments` -> `tournaments {tournaments: [{id, name, status: registration|running|completed|cancelled,
+  players, maxPlayers, maxRating, locked, registrationEndsAt, startedAt, completedAt, winner}]}`; `tournament_get {id}`
+  -> `tournament {tournament}` (the summary plus `maps` per round, `noShowMinutes`, `players: [{name, rating, seed}]`,
+  `bracket: [{round, position, player1, player2, winner, status: waiting|ready|playing|done|walkover|bye|disputed|cancelled,
+  match, map, readyAt}]`, and `chat` for its players and staff); `tournament_join {id, password?}` (refused above
+  `maxRating` or with a wrong password; tries per address limited as lobby passwords are), `tournament_leave {id}`
+  (registration only), `tournament_chat {id, text}` -> `tournament_chat {id, from, text, at}` to its players (mutes
+  and the chat rate apply). Registered players online get `tournament {tournament}` whenever it changes.
+- Staff: `tournament_create {name, maxPlayers (2..tournaments.maxPlayers), registrationMinutes, noShowMinutes?,
+  maxRating?, password?, maps?: [map id per round; the last repeats]}`, `tournament_start {id}`, `tournament_cancel
+  {id}`, `tournament_set_winner {id, round, position, winner}`; each is in the audit log.
+- Public: `/tournaments`, `/tournaments/ID` and `/api/tournaments[/ID]` on the public listener (no chat).
+- Tables `tournaments`, `tournament_players`, `tournament_matches` (new ones). After a restart a match that was being
+  offered or played is offered again (its game, if it was running, is not counted).
+- Not done yet: team tournaments, double elimination, spectating a tournament match (the game has no observer slot in
+  the server's brokering), check-in before the start.
+
 ## Protocol
 
 Newline-delimited JSON on the TCP port; every message has `t`. Requests: `hello`, `register`, `login`, `resume`,
@@ -276,12 +309,14 @@ Newline-delimited JSON on the TCP port; every message has `t`. Requests: `hello`
 `party_invite`, `party_accept`, `party_decline`, `party_leave`, `party_chat`, `party_set`, `history`, `replay_chunk`,
 `replay_get`, `room_kick`, `room_move`, `room_slot`, `room_host`, `host_addr`, `punch_request`, `relay_request`, `link`, `result`, `report_player`, `mod_ban`, `mod_unban`,
 `mod_mute`, `mod_unmute`, `mod_kick`, `mod_role`, `mod_broadcast`, `mod_reports`, `mod_report_resolve`, `mod_bans`,
-`mod_mutes`, `mod_audit`, `mod_lookup`. Events: `welcome`, `auth`, `profile`,
+`mod_mutes`, `mod_audit`, `mod_lookup`, `tournaments`, `tournament_get`, `tournament_create`, `tournament_start`,
+`tournament_cancel`, `tournament_set_winner`, `tournament_join`, `tournament_leave`, `tournament_chat`. Events: `welcome`, `auth`, `profile`,
 `leaderboard`, `maps`, `weekly`, `queue`, `match_found`, `match_accepted`, `match_cancelled`, `match_start`,
 `match_resumed`, `connect`, `punch`, `relay`, `rooms`, `room`, `chat`, `friends`, `friend_request`, `presence`, `dm`,
 `dm_history`, `party`, `party_invite`, `party_invite_closed`, `party_chat`, `history`, `replay_chunk`,
 `replay_stored`, `result_recorded`, `room_kicked`, `banned`, `kicked`, `muted`, `unmuted`, `broadcast`, `report_filed`, `mod_report`,
-`mod_done`, `mod_reports`, `mod_bans`, `mod_mutes`, `mod_audit`, `mod_lookup`, `error`.
+`mod_done`, `mod_reports`, `mod_bans`, `mod_mutes`, `mod_audit`, `mod_lookup`, `tournaments`, `tournament`,
+`tournament_chat`, `tournament_disputed`, `error`.
 
 A connection whose first line is `{"t":"relay","token":...}` becomes a byte pipe to its partner. On the UDP port the
 rendezvous takes `{"t":"reg","token","slot"}` and answers `{"t":"wait"}` until both sides are there, then

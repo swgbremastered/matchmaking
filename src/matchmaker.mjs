@@ -30,6 +30,7 @@ import { WEEKLY_ROTATION, weeklyQueue } from "./weekly.mjs";
 import { TokenBucket, WindowLimiter } from "./limits.mjs";
 import { asLogger } from "./log.mjs";
 import { Moderation } from "./moderation.mjs";
+import { Tournaments } from "./tournaments.mjs";
 
 const REPLAY_CHUNK = 24 * 1024;          // raw bytes per replay chunk (base64 keeps a line under maxLineBytes)
 const REPLAY_MAX = 32 * 1024 * 1024;     // the largest replay kept (without a `replays` option)
@@ -58,7 +59,7 @@ const roomSettings = (s = {}, base = { popCap: 75, startAge: 1, reveal: false })
 export class Matchmaker {
   constructor({ store, catalog, host = "127.0.0.1", port = 4317, minQueueMs = 15_000, ffaPlayers = 4, acceptMs = 30_000,
     corroborationMs = 60_000, weeklyRotation = WEEKLY_ROTATION, now = () => Date.now(), log = console.log,
-    tls: tlsSource = null, limits = {}, replays = {}, messages = {}, moderation = {}, discord = null } = {}) {
+    tls: tlsSource = null, limits = {}, replays = {}, messages = {}, moderation = {}, discord = null, tournaments = {} } = {}) {
     this.store = store;
     this.catalog = catalog;
     this.host = host;
@@ -102,7 +103,8 @@ export class Matchmaker {
     this.moderation = new Moderation({ store, mm: this, now, log: this.log, config: moderation });
     this.banCheckAt = now();       // bans made elsewhere (the command line) since then are enforced on the next check
     this.discord = discord;        // a DiscordNotifier, or null
-    this.extensions = [this.moderation];  // more request handlers: handle(conn, m) -> true when it was theirs
+    this.tournaments = new Tournaments({ mm: this, config: tournaments });
+    this.extensions = [this.moderation, this.tournaments];  // more request handlers: handle(conn, m) -> true when it was theirs
   }
 
   // With port 0 (tests) the UDP port is picked first and the TCP port takes the same number: a TCP pick
@@ -214,6 +216,7 @@ export class Matchmaker {
       rooms: [...this.rooms.values()].map((r) => ({ id: r.id, name: r.name, players: r.players.length, capacity: this.roomCapacity(r),
         locked: Boolean(r.password), status: r.status })),
       recent: this.store.recentMatches(15),
+      tournaments: this.tournaments.list().filter((t) => t.status === "registration" || t.status === "running"),
       openReports: this.store.mod.openReportCount()
     };
   }
@@ -623,6 +626,27 @@ export class Matchmaker {
     for (const match of this.matches.values())
       if (match.state === "playing" && match.firstReportAt && now - match.firstReportAt > this.corroborationMs) this.resolve(match, true);
     if (now - this.banCheckAt >= this.moderation.config.sweepSeconds * 1000) this.checkNewBans(now);
+    this.tournaments.tick(now);
+  }
+
+  // A match the server makes itself (a tournament's): offered to both players like a queue match (match_found,
+  // accept / decline); the first id hosts. Unranked: no rating changes. Returns the match id.
+  offerMatch({ ids, map, kind, tournament }) {
+    const id = `match-${randomBytes(4).toString("hex")}`;
+    const participants = ids.map((playerId, i) => {
+      const rating = this.store.rating(playerId, "solo");
+      return { playerId, name: this.store.player(playerId).name, rating, shown: rating, team: i + 1, slot: i + 1, civ: "", party: null };
+    });
+    const match = {
+      id, kind, ranked: false, queueId: "1v1", pool: "solo", casualPool: null, week: null, tournament,
+      map, seed: randomInt(1, 0x7fffffff), participants, hostPlayerId: ids[0], settings: roomSettings(),
+      accepted: new Set(), state: "accept", reports: new Map(), gone: new Set(), firstReportAt: 0
+    };
+    this.matches.set(id, match);
+    match.timer = setTimeout(() => this.cancelMatch(match, "the accept time ran out"), this.acceptMs);
+    this.log(`[matchmaking] ${id}: ${kind} on ${map.name}: ${participants.map((p) => p.name).join(" vs ")}`);
+    for (const p of participants) this.sendTo(p.playerId, { t: "match_found", match: this.publicMatch(match, p.playerId), acceptMs: this.acceptMs });
+    return id;
   }
 
   // Discord notices go out in the background; nothing about them may hold up or break a match.
@@ -730,6 +754,7 @@ export class Matchmaker {
       if (ticket) ticket.matchId = null;  // back to searching (a decliner was taken out)
       this.sendTo(p.playerId, { t: "match_cancelled", match: match.id, reason, requeued: Boolean(ticket) });
     }
+    if (match.tournament) this.tournaments.onCancelled(match);
   }
 
   activeMatch(playerId) {
@@ -743,7 +768,7 @@ export class Matchmaker {
     return {
       id: match.id, kind: match.kind, ranked: match.ranked, queue: match.queueId, pool: match.pool, week: match.week ?? undefined,
       map: { id: match.map.id, name: match.map.name, randomMap: match.map.randomMap ?? 0, testStart: match.map.testStart === true },
-      seed: match.seed, host: 1, you: me?.slot ?? 0, settings: match.settings ?? roomSettings(),
+      seed: match.seed, host: 1, you: me?.slot ?? 0, settings: match.settings ?? roomSettings(), tournament: match.tournament ?? undefined,
       // the shown rating (an unranked match pairs by the hidden casual one, never sent)
       players: [...match.participants.map((p) => ({ name: p.name, slot: p.slot, team: p.team, rating: p.shown ?? p.rating, civ: p.civ ?? "" })),
         ...(match.ai ?? []).map((a) => ({ name: a.name, slot: a.slot, team: a.team, rating: null, civ: a.civ, ai: true, difficulty: a.difficulty }))]
@@ -920,6 +945,7 @@ export class Matchmaker {
       this.notify((d) => d.matchCompleted({ id: match.id, map: match.map?.name, winner: side(winner), loser: side(loser) }));
     }
     this.matches.delete(match.id);
+    if (match.tournament) this.tournaments.onResult(match, status, winners);
     this.refreshPresence();
   }
 

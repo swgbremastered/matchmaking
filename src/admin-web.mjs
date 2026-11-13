@@ -191,6 +191,8 @@ ${rows(o.queues, [(q) => esc(q.lane), (q) => esc(q.queue), (q) => q.players, (q)
 ${rows(o.matches, [(m) => esc(m.id), (m) => esc(m.kind), (m) => esc(m.map), (m) => esc(m.state), (m) => esc(m.players.join(", ")) + (m.ai ? ` + ${m.ai} computer` : "")], "No matches.")}</table></section>
 <section><h2>Lobbies</h2><table><tr><th>Name</th><th>Players</th><th></th></tr>
 ${rows(o.rooms, [(r) => esc(r.name), (r) => `${r.players} / ${r.capacity}`, (r) => (r.locked ? "password" : "")], "No lobbies.")}</table></section>
+<section><h2>Tournaments</h2><table><tr><th>Name</th><th>Status</th><th>Players</th><th>Registration ends</th></tr>
+${rows(o.tournaments, [(t) => esc(t.name), (t) => esc(t.status), (t) => `${t.players} / ${t.maxPlayers}`, (t) => when(t.registrationEndsAt)], "No open tournaments.")}</table></section>
 <section><h2>Online players</h2><table><tr><th>Name</th><th>Presence</th><th>Role</th><th></th></tr>
 ${rows(o.online, [(p) => esc(p.name), (p) => esc(p.presence), (p) => esc(p.role),
     (p) => (p.role === "admin" ? "" : this.form(s, "kick", `${this.hidden("name", p.name)}<input name="reason" placeholder="reason" maxlength="300">`, "Kick"))], "Nobody is online.")}</table></section>

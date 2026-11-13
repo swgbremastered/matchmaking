@@ -91,5 +91,11 @@
     "perPlayerPerHour": 6,
     "timeoutMs": 10000,
     "siteUrl": ""
+  },
+  "tournaments": {
+    "maxPlayers": 64,
+    "retrySeconds": 30,
+    "defaultNoShowMinutes": 10,
+    "maxOpen": 20
   }
 }

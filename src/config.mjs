@@ -96,6 +96,12 @@ export const DEFAULTS = Object.freeze({
     perPlayerPerHour: 6,           // posts naming one player per hour, at most
     timeoutMs: 10_000,
     siteUrl: ""                    // the public pages' address (https://stats.example.com): results link to the match
+  },
+  tournaments: {
+    maxPlayers: 64,                // the largest bracket a tournament may ask for
+    retrySeconds: 30,              // a tournament match not taken up is offered again after this
+    defaultNoShowMinutes: 10,      // a player not there this long after their match is ready loses by walkover
+    maxOpen: 20                    // tournaments in registration or running at once
   }
 });
 
@@ -171,5 +177,7 @@ export function validate(c) {
   for (const k of ["port", "requestsPerMinute", "cacheSeconds"]) posInt(c.web[k], `web.${k}`);
   if (c.discord.webhookUrl && !/^https:\/\//.test(c.discord.webhookUrl)) throw new Error("discord.webhookUrl must be an https:// address");
   for (const k of ["perPlayerPerHour", "timeoutMs"]) posInt(c.discord[k], `discord.${k}`);
+  for (const k of ["maxPlayers", "retrySeconds", "defaultNoShowMinutes", "maxOpen"]) posInt(c.tournaments[k], `tournaments.${k}`);
+  if (c.tournaments.maxPlayers < 2 || c.tournaments.maxPlayers > 256) throw new Error("tournaments.maxPlayers is 2 to 256");
   if (!["debug", "info", "warn", "error"].includes(c.log.level)) throw new Error("log.level: debug | info | warn | error");
 }
