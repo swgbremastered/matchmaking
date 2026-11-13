@@ -23,7 +23,7 @@
 import net from "node:net";
 import tls from "node:tls";
 import dgram from "node:dgram";
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes, randomInt, scryptSync, timingSafeEqual } from "node:crypto";
 import { QueueEngine, spreadFor } from "./queue.mjs";
 import { casualPoolForQueue, ratingPoolForQueue } from "./rating-pool.mjs";
 import { WEEKLY_ROTATION, weeklyQueue } from "./weekly.mjs";
@@ -38,11 +38,15 @@ const RELAY_WAIT_MS = 120_000;           // an unpaired relay token / punch is f
 // A Matchmaker made without `limits` (the tests) limits nothing but the line size (1 MiB; config.mjs: 64 KiB).
 const NO_LIMITS = Object.freeze({ maxConnections: 0, maxConnectionsPerIp: 0, maxLineBytes: 1024 * 1024, authTimeoutMs: 0,
   messagesPerSecond: 0, loginPerIpPerMinute: 0, registerPerIpPerHour: 0, loginFailuresPerAccount: 0, loginLockoutMinutes: 15,
-  chatPerMinute: 0, chatBurst: 0, udpPerIpPerSecond: 0, maxRelays: 0 });
+  chatPerMinute: 0, chatBurst: 0, udpPerIpPerSecond: 0, maxRelays: 0, roomPasswordPerIpPerMinute: 0 });
 const ipOf = (socket) => String(socket.remoteAddress ?? "").replace(/^::ffff:/, "");
 // The civilisations by the genie name the game client takes; "" = the game's default.
 export const CIVS = Object.freeze(["EMPIRE", "GUNGANS", "REBEL", "NABOO", "FEDERATION", "WOOKIEES", "REPUBLIC", "CONFEDERACY"]);
 const civOf = (value) => (CIVS.includes(String(value ?? "").toUpperCase()) ? String(value).toUpperCase() : "");
+// The game's computer-player difficulties, easiest first.
+export const AI_DIFFICULTIES = Object.freeze(["easiest", "easy", "moderate", "hard", "hardest"]);
+const ROOM_PASSWORD_MAX = 64;
+const hashRoomPassword = (password, salt) => scryptSync(password, salt, 32);
 // Lobby settings the host sets (the game client applies them to every peer alike): population limit, start tech level,
 // Reveal Map.
 const roomSettings = (s = {}, base = { popCap: 75, startAge: 1, reveal: false }) => ({
@@ -76,6 +80,7 @@ export class Matchmaker {
     this.messageRate = new TokenBucket({ rate: L.messagesPerSecond, burst: L.messagesPerSecond * 2, now });
     this.chatRate = new TokenBucket({ rate: L.chatPerMinute / 60, burst: Math.max(1, L.chatBurst), now });
     this.udpRate = new TokenBucket({ rate: L.udpPerIpPerSecond, burst: L.udpPerIpPerSecond * 2, now });
+    this.roomPasswordLimit = new WindowLimiter({ limit: L.roomPasswordPerIpPerMinute, windowMs: 60_000, now });
     this.sockets = new Set();      // every open TCP connection (the caps, stop())
     this.perIp = new Map();        // address -> open TCP connections
     this.connSeq = 0;
@@ -154,7 +159,8 @@ export class Matchmaker {
       if (deleted) this.log.event("info", "replays_deleted", { count: deleted, olderThanDays: this.retentionDays });
     }
     this.store.deleteExpiredSessions(t);
-    for (const l of [this.loginIpLimit, this.registerIpLimit, this.loginFailures, this.messageRate, this.chatRate, this.udpRate]) l.sweep();
+    for (const l of [this.loginIpLimit, this.registerIpLimit, this.loginFailures, this.messageRate, this.chatRate, this.udpRate,
+      this.roomPasswordLimit]) l.sweep();
     for (const [token, r] of this.relays) {
       if (t - r.created < RELAY_WAIT_MS) continue;
       r.waiting?.socket.destroy();
@@ -438,7 +444,15 @@ export class Matchmaker {
       case "decline":
         return this.answerMatch(conn, m);
       case "rooms":
-        return this.send(conn, { t: "rooms", rooms: this.publicRooms() });
+        return this.send(conn, this.roomSearch(conn, m));
+      case "room_kick":
+        return this.roomKick(conn, m);
+      case "room_move":
+        return this.roomMove(conn, m);
+      case "room_slot":
+        return this.roomSlot(conn, m);
+      case "room_host":
+        return this.roomHost(conn, m);
       case "room_create":
         return this.createRoom(conn, m);
       case "room_join":
@@ -693,7 +707,8 @@ export class Matchmaker {
       map: { id: match.map.id, name: match.map.name, randomMap: match.map.randomMap ?? 0, testStart: match.map.testStart === true },
       seed: match.seed, host: 1, you: me?.slot ?? 0, settings: match.settings ?? roomSettings(),
       // the shown rating (an unranked match pairs by the hidden casual one, never sent)
-      players: match.participants.map((p) => ({ name: p.name, slot: p.slot, team: p.team, rating: p.shown ?? p.rating, civ: p.civ ?? "" }))
+      players: [...match.participants.map((p) => ({ name: p.name, slot: p.slot, team: p.team, rating: p.shown ?? p.rating, civ: p.civ ?? "" })),
+        ...(match.ai ?? []).map((a) => ({ name: a.name, slot: a.slot, team: a.team, rating: null, civ: a.civ, ai: true, difficulty: a.difficulty }))]
     };
   }
 
@@ -846,9 +861,16 @@ export class Matchmaker {
       if (order) places = order;
     }
     match.state = "done";
-    const status = contested || !winners ? "contested" : "completed";
+    let status = contested || !winners ? "contested" : "completed";
+    // With computer players the result names human winners and losers only when humans played each other
+    if (status === "completed" && match.ai?.length) {
+      const won = new Set(winners.map(teamOf).filter(Boolean));
+      const humansWon = match.participants.some((p) => won.has(p.team));
+      const humansLost = match.participants.some((p) => !won.has(p.team));
+      if (!humansWon || !humansLost) status = "vs_ai";
+    }
     const ratings = this.store.recordResult(match.id, { winnerSlots: winners ?? [], places, status,
-      detail: { reports: Object.fromEntries(match.reports), timedOut } });
+      detail: { reports: Object.fromEntries(match.reports), timedOut, winners, ai: match.ai?.length ? match.ai : undefined } });
     const named = {};
     for (const p of match.participants) named[p.name] = ratings[p.playerId];
     this.log(`[matchmaking] ${match.id} ${status}${timedOut ? " (corroboration timeout)" : ""}: ${JSON.stringify(named)}`);
@@ -876,8 +898,57 @@ export class Matchmaker {
       map: { id: room.map.id, name: room.map.name }, status: room.status, settings: room.settings,
       players: room.players.map((p) => ({ name: p.name, slot: p.slot, team: p.team, rating: p.rating, ready: p.ready,
         host: p.playerId === room.hostId, civ: p.civ ?? "" })),
-      messages: room.messages.slice(-30)
+      messages: room.messages.slice(-30),
+      locked: Boolean(room.password), capacity: this.roomCapacity(room), slots: this.roomSlots(room)
     };
+  }
+
+  // Every slot: open, closed, a player's or a computer player's.
+  roomSlots(room) {
+    return Array.from({ length: room.maxPlayers }, (_, i) => {
+      const slot = i + 1;
+      const p = room.players.find((x) => x.slot === slot);
+      if (p) return { slot, state: "player", name: p.name, team: p.team };
+      const ai = room.ai.get(slot);
+      if (ai) return { slot, state: "ai", difficulty: ai.difficulty, civ: ai.civ, team: ai.team };
+      return { slot, state: room.closed.has(slot) ? "closed" : "open" };
+    });
+  }
+
+  // the places players can take: every slot not closed and not a computer player's
+  roomCapacity(room) {
+    return room.maxPlayers - room.closed.size - room.ai.size;
+  }
+
+  freeSlot(room) {
+    const used = new Set(room.players.map((p) => p.slot));
+    return Array.from({ length: room.maxPlayers }, (_, i) => i + 1).find((s) => !used.has(s) && !room.closed.has(s) && !room.ai.has(s));
+  }
+
+  // `rooms` with any of these fields filters on the server: query (in the room's or the host's name), hideFull,
+  // hideLocked, ranked (true / false), map, pool, maxPlayers (at most), fitsMe (the caller's rating is inside the
+  // room's window; needs a log-in). Without them the answer is the plain list.
+  roomSearch(conn, m) {
+    const keys = ["query", "hideFull", "hideLocked", "ranked", "map", "pool", "maxPlayers", "fitsMe"];
+    if (!keys.some((k) => m[k] !== undefined)) return { t: "rooms", rooms: this.publicRooms() };
+    const query = String(m.query ?? "").trim().toLowerCase().slice(0, 40);
+    const me = m.fitsMe === true ? this.requirePlayer(conn) : null;
+    const rooms = [...this.rooms.values()].filter((r) => r.status === "open").filter((r) => {
+      const host = r.players.find((p) => p.playerId === r.hostId)?.name ?? "";
+      if (query && !r.name.toLowerCase().includes(query) && !host.toLowerCase().includes(query)) return false;
+      if (m.hideFull === true && r.players.length >= this.roomCapacity(r)) return false;
+      if (m.hideLocked === true && r.password) return false;
+      if (typeof m.ranked === "boolean" && r.ranked !== m.ranked) return false;
+      if (m.map !== undefined && r.map.id !== String(m.map)) return false;
+      if (m.pool !== undefined && r.pool !== String(m.pool)) return false;
+      if (m.maxPlayers !== undefined && r.maxPlayers > Number(m.maxPlayers)) return false;
+      if (me) {
+        const rating = this.store.rating(me.id, r.pool);
+        if (rating < r.minElo || rating > r.maxElo) return false;
+      }
+      return true;
+    });
+    return { t: "rooms", rooms: rooms.map((r) => this.publicRoom(r)), filtered: true };
   }
 
   broadcastRoom(room) {
@@ -905,7 +976,14 @@ export class Matchmaker {
     const maxPlayers = Math.min(8, Math.max(2, Number(m.maxPlayers ?? 2) || 2));
     const map = this.catalog.get(String(m.map ?? "")) ?? this.catalog.maps[0];
     const name = String(m.name ?? "").trim().slice(0, 40) || `${player.name}'s game`;
+    let password = null;
+    if (m.password !== undefined && m.password !== null && m.password !== "") {
+      if (typeof m.password !== "string" || m.password.length > ROOM_PASSWORD_MAX) throw new Error(`a lobby password is 1 to ${ROOM_PASSWORD_MAX} characters`);
+      const salt = randomBytes(16);
+      password = { salt, hash: hashRoomPassword(m.password, salt) };
+    }
     const room = {
+      password, kicked: new Set(), closed: new Set(), ai: new Map(),
       id: `room-${randomBytes(4).toString("hex")}`, name, hostId: player.id, minElo, maxElo, maxPlayers, pool,
       ranked: m.ranked === true, map, status: "open", messages: [], settings: roomSettings(m.settings ?? {}),
       players: [{ playerId: player.id, name: player.name, slot: 1, team: 1, rating, ready: true, civ: civOf(m.civ) }]
@@ -923,11 +1001,16 @@ export class Matchmaker {
     if (this.roomOf(player.id) && this.roomOf(player.id) !== room) throw new Error("leave your current lobby first");
     if (this.queue.ticketOf(player.id)) throw new Error("leave the queue first");
     if (room.players.some((p) => p.playerId === player.id)) return this.broadcastRoom(room);
-    if (room.players.length >= room.maxPlayers) throw new Error("that lobby is full");
+    if (room.kicked.has(player.id)) throw new Error("the host removed you from that lobby");
+    if (room.password) {
+      if (!this.roomPasswordLimit.take(conn.ip)) throw new Error("too many lobby password attempts; try again in a minute");
+      const given = typeof m.password === "string" && m.password.length <= ROOM_PASSWORD_MAX ? m.password : "";
+      if (!timingSafeEqual(hashRoomPassword(given, room.password.salt), room.password.hash)) throw new Error("wrong lobby password");
+    }
+    const slot = this.freeSlot(room);
+    if (!slot) throw new Error("that lobby is full");
     const rating = this.store.rating(player.id, room.pool);
     if (rating < room.minElo || rating > room.maxElo) throw new Error(`your rating ${rating} is outside ${room.minElo}..${room.maxElo}`);
-    const used = new Set(room.players.map((p) => p.slot));
-    const slot = Array.from({ length: room.maxPlayers }, (_, i) => i + 1).find((s) => !used.has(s));
     room.players.push({ playerId: player.id, name: player.name, slot, team: slot % 2 ? 1 : 2, rating, ready: false, civ: civOf(m.civ) });
     this.addRoomMessage(room, "", `${player.name} joined the lobby.`);
     this.broadcastRoom(room);
@@ -944,8 +1027,12 @@ export class Matchmaker {
       for (const conn of this.online.values()) if (conn.player && !this.roomOf(conn.player.id)) this.send(conn, { t: "rooms", rooms });
       return;
     }
-    if (room.hostId === playerId) room.hostId = room.players[0].playerId;  // the next player hosts
     this.addRoomMessage(room, "", `${leaving.name} left the lobby.`);
+    if (room.hostId === playerId) {  // the next player hosts
+      room.hostId = room.players[0].playerId;
+      room.players[0].ready = true;
+      this.addRoomMessage(room, "", `${room.players[0].name} is now the host.`);
+    }
     this.broadcastRoom(room);
   }
 
@@ -977,13 +1064,17 @@ export class Matchmaker {
     const player = this.requirePlayer(conn);
     const room = this.roomOf(player.id);
     if (!room || room.hostId !== player.id) throw new Error("only the lobby's host starts the game");
-    if (room.players.length < 2) throw new Error("a game needs two players");
+    if (room.players.length + room.ai.size < 2) throw new Error("a game needs two players");
     if (room.players.some((p) => !p.ready && p.playerId !== room.hostId)) throw new Error("not every player is ready");
     room.status = "started";
     const players = [...room.players].sort((a, b) => (b.playerId === room.hostId) - (a.playerId === room.hostId) || a.slot - b.slot);
     const participants = players.map((p, i) => ({ playerId: p.playerId, name: p.name, rating: p.rating, slot: i + 1,
       team: room.pool === "ffa" ? i + 1 : p.team, civ: p.civ ?? "" }));
+    // computer players take the slots after the humans; the host's game runs them
+    const ai = [...room.ai.entries()].sort((a, b) => a[0] - b[0]).map(([, a], i) => ({ name: `Computer (${a.difficulty})`,
+      slot: participants.length + i + 1, team: room.pool === "ffa" ? participants.length + i + 1 : a.team, civ: a.civ, difficulty: a.difficulty }));
     const match = {
+      ai,
       id: `match-${randomBytes(4).toString("hex")}`, kind: "lobby", ranked: room.ranked, settings: room.settings,
       queueId: room.pool === "solo" ? "1v1" : room.pool, pool: room.pool, map: room.map, seed: randomInt(1, 0x7fffffff),
       participants, hostPlayerId: room.hostId, accepted: new Set(), state: "accept", reports: new Map(), gone: new Set(), firstReportAt: 0
@@ -1019,6 +1110,80 @@ export class Matchmaker {
     room.settings = roomSettings(m, room.settings);
     for (const p of room.players) if (p.playerId !== room.hostId) p.ready = false;
     this.addRoomMessage(room, "", `${player.name} changed the game settings.`);
+    this.broadcastRoom(room);
+  }
+
+  hostRoom(conn) {
+    const player = this.requirePlayer(conn);
+    const room = this.roomOf(player.id);
+    if (!room || room.status !== "open" || room.hostId !== player.id) throw new Error("only the lobby's host does that");
+    return { player, room };
+  }
+
+  // The host removes a player; that player cannot come back to this lobby.
+  roomKick(conn, m) {
+    const { player, room } = this.hostRoom(conn);
+    const target = room.players.find((p) => p.name.toLowerCase() === String(m.name ?? "").toLowerCase());
+    if (!target) throw new Error("no such player in your lobby");
+    if (target.playerId === player.id) throw new Error("you cannot remove yourself; leave instead");
+    room.kicked.add(target.playerId);
+    room.players = room.players.filter((p) => p.playerId !== target.playerId);
+    this.addRoomMessage(room, "", `${target.name} was removed from the lobby.`);
+    this.sendTo(target.playerId, { t: "room_kicked", room: room.id, by: player.name });
+    this.sendTo(target.playerId, { t: "room", room: null });
+    this.broadcastRoom(room);
+  }
+
+  // The host moves a player to another slot (swapping with a player there) and / or team.
+  roomMove(conn, m) {
+    const { room } = this.hostRoom(conn);
+    const target = room.players.find((p) => p.name.toLowerCase() === String(m.name ?? "").toLowerCase());
+    if (!target) throw new Error("no such player in your lobby");
+    if (m.slot !== undefined) {
+      const slot = Number(m.slot);
+      if (!Number.isInteger(slot) || slot < 1 || slot > room.maxPlayers) throw new Error(`a slot is 1 to ${room.maxPlayers}`);
+      if (room.closed.has(slot) || room.ai.has(slot)) throw new Error("that slot is not free");
+      const other = room.players.find((p) => p.slot === slot);
+      if (other) other.slot = target.slot;
+      target.slot = slot;
+    }
+    if (m.team !== undefined) {
+      if (room.pool !== "team") throw new Error("teams are set in team lobbies");
+      const team = Number(m.team);
+      if (!Number.isInteger(team) || team < 1 || team > 4) throw new Error("a team is 1 to 4");
+      target.team = team;
+    }
+    if (target.playerId !== room.hostId) target.ready = false;
+    this.broadcastRoom(room);
+  }
+
+  // The host opens or closes a slot, or puts a computer player in it: { slot, state: open | closed | ai,
+  // difficulty?, civ?, team? }. Computer players only in unranked lobbies.
+  roomSlot(conn, m) {
+    const { room } = this.hostRoom(conn);
+    const slot = Number(m.slot);
+    if (!Number.isInteger(slot) || slot < 1 || slot > room.maxPlayers) throw new Error(`a slot is 1 to ${room.maxPlayers}`);
+    if (room.players.some((p) => p.slot === slot)) throw new Error("a player is in that slot");
+    room.closed.delete(slot);
+    room.ai.delete(slot);
+    if (m.state === "closed") room.closed.add(slot);
+    else if (m.state === "ai") {
+      if (room.ranked) throw new Error("no computer players in a ranked lobby");
+      const difficulty = AI_DIFFICULTIES.includes(m.difficulty) ? m.difficulty : "moderate";
+      const team = room.pool === "team" && [1, 2, 3, 4].includes(Number(m.team)) ? Number(m.team) : slot % 2 ? 1 : 2;
+      room.ai.set(slot, { difficulty, civ: civOf(m.civ), team });
+    } else if (m.state !== "open") throw new Error("a slot is open, closed or ai");
+    this.broadcastRoom(room);
+  }
+
+  // The host hands the lobby to another player in it.
+  roomHost(conn, m) {
+    const { room } = this.hostRoom(conn);
+    const target = room.players.find((p) => p.name.toLowerCase() === String(m.name ?? "").toLowerCase());
+    if (!target) throw new Error("no such player in your lobby");
+    room.hostId = target.playerId;
+    target.ready = true;
+    this.addRoomMessage(room, "", `${target.name} is now the host.`);
     this.broadcastRoom(room);
   }
 

@@ -38,7 +38,8 @@ export const DEFAULTS = Object.freeze({
     chatPerMinute: 30,             // lobby chat, party chat and direct messages per player
     chatBurst: 8,
     udpPerIpPerSecond: 50,         // rendezvous datagrams per address
-    maxRelays: 500                 // relay tokens waiting at once
+    maxRelays: 500,                // relay tokens waiting at once
+    roomPasswordPerIpPerMinute: 10 // wrong-or-right lobby password tries per address
   },
   accounts: {
     maxAccounts: 50_000,           // registrations stop at this many accounts

@@ -48,6 +48,7 @@ export class Client {
     });
   }
   async ask(m, type, when) {
+    if (this.fresh) this.inbox.length = 0;
     this.send(m);
     const r = await this.next(type, when);
     if (r.t === "error") throw Object.assign(new Error(r.message), { reply: r });

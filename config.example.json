@@ -33,7 +33,8 @@
     "chatPerMinute": 30,
     "chatBurst": 8,
     "udpPerIpPerSecond": 50,
-    "maxRelays": 500
+    "maxRelays": 500,
+    "roomPasswordPerIpPerMinute": 10
   },
   "accounts": {
     "maxAccounts": 50000,

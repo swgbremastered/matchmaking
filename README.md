@@ -15,7 +15,8 @@ It is a fork of the server side of [Empire League](https://github.com/ForgeableS
   and FFA, divisions, a leaderboard per pool, profiles with recent matches.
 - **Queues**: ranked and unranked 1v1, team and FFA queues, widening rating ranges, a balanced team split, a map pool
   by group with per-map toggles and favourites, a weekly rotating queue, accept / decline with a cooldown.
-- **Lobbies**: open games with a rating window, chat, ready marks, civilisations, teams and host settings.
+- **Lobbies**: open games with a rating window, chat, ready marks, civilisations, teams and host settings; optional
+  passwords, search and filters, the host's kick, slot, team and computer-player controls.
 - **Social**: friends with presence, direct messages (kept for offline players), parties that queue together.
 - **Brokering**: a direct connection, then a UDP hole punch, then a TCP relay, whichever comes up first.
 - **Results**: reports from every player, corroboration, contested results, FFA placings, stored replays.
@@ -150,6 +151,23 @@ the room's rating window), `room_chat`, `room_ready`, `room_leave`, `room_start`
   `replay_stored`; `replay_get {match}` -> `replay_chunk` messages to anyone logged in.
 - **Lobbies**: a civilisation per player (`civ` on `room_create` / `room_join`, `room_set {civ, team}`), the host's
   settings (`room_settings {map, popCap, startAge, reveal}`); `match_start` carries `players[].civ` and `settings`.
+- **Lobby passwords**: `room_create {..., password}` (1 to 64 characters; kept as a scrypt hash in memory, never sent
+  back); `rooms` and `room` show `locked: true`; `room_join {room, password}` refuses a wrong one ("wrong lobby
+  password"); tries per address are limited (`limits.roomPasswordPerIpPerMinute`). The host never needs it.
+- **Lobby search**: `rooms` with any of `query` (in the room's or the host's name), `hideFull`, `hideLocked`, `ranked`
+  (true / false), `map`, `pool`, `maxPlayers` (at most), `fitsMe` (the caller's rating is inside the room's window)
+  answers only the rooms that pass, with `filtered: true`. `rooms` without them, and the lists pushed when a lobby
+  changes, are the whole list as before.
+- **Host controls** (the host, while the lobby is open): `room_kick {name}` (-> `room_kicked {room, by}` and `room
+  {room: null}` to that player, who cannot join that lobby again), `room_move {name, slot?, team?}` (a free slot, or
+  swap with the player there; team 1 to 4 in team lobbies), `room_slot {slot, state: open|closed|ai, difficulty?, civ?,
+  team?}` (closing or filling slots lowers the room's `capacity`; computer players only in unranked lobbies),
+  `room_host {name}` (hand the lobby on). A host who leaves before the start passes it to the next player. `room`
+  carries `capacity` and `slots: [{slot, state: open|closed|player|ai, name?, team?, difficulty?, civ?}]`; computer
+  players are in `slots`, not in `players`.
+- **Computer players**: `match_start`'s `players[]` lists them after the humans with `ai: true`, `difficulty`
+  (`easiest`, `easy`, `moderate`, `hard`, `hardest`), `civ`, `team` and `rating: null`; the host's game runs them and
+  only humans report. A result where humans did not win and lose against each other is recorded as `vs_ai`.
 - **FFA placings**: a result may carry `places {slot: place}`; the FFA rating is pairwise by place.
 - **The control link comes back**: `resume {token}` during a running match: the player is no longer counted as gone
   (`match_resumed`), its report counts again.
@@ -205,13 +223,13 @@ Newline-delimited JSON on the TCP port; every message has `t`. Requests: `hello`
 `decline`, `rooms`, `room_create`, `room_join`, `room_leave`, `room_chat`, `room_ready`, `room_start`, `room_set`,
 `room_settings`, `friends`, `friend_add`, `friend_accept`, `friend_remove`, `dm`, `dm_history`, `presence`,
 `party_invite`, `party_accept`, `party_decline`, `party_leave`, `party_chat`, `party_set`, `history`, `replay_chunk`,
-`replay_get`, `host_addr`, `punch_request`, `relay_request`, `link`, `result`, `report_player`, `mod_ban`, `mod_unban`,
+`replay_get`, `room_kick`, `room_move`, `room_slot`, `room_host`, `host_addr`, `punch_request`, `relay_request`, `link`, `result`, `report_player`, `mod_ban`, `mod_unban`,
 `mod_mute`, `mod_unmute`, `mod_kick`, `mod_role`, `mod_broadcast`, `mod_reports`, `mod_report_resolve`, `mod_bans`,
 `mod_mutes`, `mod_audit`, `mod_lookup`. Events: `welcome`, `auth`, `profile`,
 `leaderboard`, `maps`, `weekly`, `queue`, `match_found`, `match_accepted`, `match_cancelled`, `match_start`,
 `match_resumed`, `connect`, `punch`, `relay`, `rooms`, `room`, `chat`, `friends`, `friend_request`, `presence`, `dm`,
 `dm_history`, `party`, `party_invite`, `party_invite_closed`, `party_chat`, `history`, `replay_chunk`,
-`replay_stored`, `result_recorded`, `banned`, `kicked`, `muted`, `unmuted`, `broadcast`, `report_filed`, `mod_report`,
+`replay_stored`, `result_recorded`, `room_kicked`, `banned`, `kicked`, `muted`, `unmuted`, `broadcast`, `report_filed`, `mod_report`,
 `mod_done`, `mod_reports`, `mod_bans`, `mod_mutes`, `mod_audit`, `mod_lookup`, `error`.
 
 A connection whose first line is `{"t":"relay","token":...}` becomes a byte pipe to its partner. On the UDP port the
