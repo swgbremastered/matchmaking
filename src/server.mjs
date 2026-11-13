@@ -17,6 +17,7 @@ import { HealthServer } from "./health.mjs";
 import { grantConfigAdmins } from "./moderation.mjs";
 import { AdminServer } from "./admin-web.mjs";
 import { PublicWeb } from "./public-web.mjs";
+import { DiscordNotifier } from "./discord.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { config: c, file } = loadConfig(process.argv.slice(2));
@@ -36,7 +37,8 @@ if (c.tls.enabled) {
   certs.start();
 }
 const mm = new Matchmaker({ store, catalog, host: c.host, port: c.port, minQueueMs: c.minQueueMs, ffaPlayers: c.ffaPlayers,
-  acceptMs: c.acceptMs, corroborationMs: c.corroborationMs, log, tls: certs, limits: c.limits, replays: c.replays, messages: c.messages, moderation: c.moderation });
+  acceptMs: c.acceptMs, corroborationMs: c.corroborationMs, log, tls: certs, limits: c.limits, replays: c.replays, messages: c.messages, moderation: c.moderation,
+  discord: c.discord.webhookUrl ? new DiscordNotifier({ config: c.discord, log }) : null });
 await mm.start();
 let health = null;
 if (c.health.enabled) {

@@ -88,6 +88,14 @@ export const DEFAULTS = Object.freeze({
     requestsPerMinute: 60,         // per address
     cacheSeconds: 30,              // Cache-Control max-age
     replays: false                 // true: /matches/<id>/replay downloads the stored replay
+  },
+  discord: {
+    webhookUrl: "",                // a channel webhook (https://discord.com/api/webhooks/...); empty: no posts
+    queueNotices: true,            // a post when a player waits in the ranked 1v1 queue
+    resultNotices: true,           // a post when a ranked 1v1 result is confirmed
+    perPlayerPerHour: 6,           // posts naming one player per hour, at most
+    timeoutMs: 10_000,
+    siteUrl: ""                    // the public pages' address (https://stats.example.com): results link to the match
   }
 });
 
@@ -161,5 +169,7 @@ export function validate(c) {
   if (!(c.admin.sessionHours > 0)) throw new Error("admin.sessionHours must be above 0");
   posInt(c.admin.loginPerIpPerMinute, "admin.loginPerIpPerMinute");
   for (const k of ["port", "requestsPerMinute", "cacheSeconds"]) posInt(c.web[k], `web.${k}`);
+  if (c.discord.webhookUrl && !/^https:\/\//.test(c.discord.webhookUrl)) throw new Error("discord.webhookUrl must be an https:// address");
+  for (const k of ["perPlayerPerHour", "timeoutMs"]) posInt(c.discord[k], `discord.${k}`);
   if (!["debug", "info", "warn", "error"].includes(c.log.level)) throw new Error("log.level: debug | info | warn | error");
 }

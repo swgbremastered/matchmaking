@@ -83,5 +83,13 @@
     "requestsPerMinute": 60,
     "cacheSeconds": 30,
     "replays": false
+  },
+  "discord": {
+    "webhookUrl": "",
+    "queueNotices": true,
+    "resultNotices": true,
+    "perPlayerPerHour": 6,
+    "timeoutMs": 10000,
+    "siteUrl": ""
   }
 }

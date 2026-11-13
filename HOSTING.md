@@ -189,6 +189,12 @@ publish `127.0.0.1:4320:4320/tcp`, and serve them through a TLS reverse proxy on
 sent. Replays stay private unless `web.replays` is true. The pages are cacheable for `web.cacheSeconds`, so a caching
 proxy or CDN in front takes most of the load.
 
+### Discord
+
+Create a webhook in the channel's settings (Integrations, Webhooks) and put its address in the config's
+`discord.webhookUrl`. The webhook address is a secret (anyone who has it can post in that channel): keep the config
+file private.
+
 ## 8. Upgrades and rollback
 
 1. Pick the new image tag (`<version>-<commit>`; each workflow run prints it in its summary).

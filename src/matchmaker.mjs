@@ -58,7 +58,7 @@ const roomSettings = (s = {}, base = { popCap: 75, startAge: 1, reveal: false })
 export class Matchmaker {
   constructor({ store, catalog, host = "127.0.0.1", port = 4317, minQueueMs = 15_000, ffaPlayers = 4, acceptMs = 30_000,
     corroborationMs = 60_000, weeklyRotation = WEEKLY_ROTATION, now = () => Date.now(), log = console.log,
-    tls: tlsSource = null, limits = {}, replays = {}, messages = {}, moderation = {} } = {}) {
+    tls: tlsSource = null, limits = {}, replays = {}, messages = {}, moderation = {}, discord = null } = {}) {
     this.store = store;
     this.catalog = catalog;
     this.host = host;
@@ -101,19 +101,20 @@ export class Matchmaker {
     this.uploads = new Map();      // "match|player" -> [Buffer]
     this.moderation = new Moderation({ store, mm: this, now, log: this.log, config: moderation });
     this.banCheckAt = now();       // bans made elsewhere (the command line) since then are enforced on the next check
+    this.discord = discord;        // a DiscordNotifier, or null
     this.extensions = [this.moderation];  // more request handlers: handle(conn, m) -> true when it was theirs
   }
 
   // With port 0 (tests) the UDP port is picked first and the TCP port takes the same number: a TCP pick
   // followed by the UDP bind failed with EACCES whenever it fell in one of Windows' excluded UDP ranges. A number TCP
-  // cannot take is tried again (a few times).
+  // cannot take is tried again (Hyper-V can reserve wide ranges, so up to 50 times).
   async start() {
     const wanted = this.port;
     for (let attempt = 0; ; attempt += 1) {
       try {
         return await this.startOnce();
       } catch (error) {
-        if (wanted !== 0 || attempt >= 10 || !["EACCES", "EADDRINUSE"].includes(error?.code)) throw error;
+        if (wanted !== 0 || attempt >= 50 || !["EACCES", "EADDRINUSE"].includes(error?.code)) throw error;
         try { this.udp.close(); } catch { /* not bound */ }
         this.port = 0;
       }
@@ -589,6 +590,7 @@ export class Matchmaker {
       this.sendTo(id, { t: "queue", state: "searching", queue: queueId, ranked, lane, week, party: Boolean(party),
         rating: ranked ? ticket.rating : shown(id), minRating: ranked ? ticket.rating - spread : 0, maxRating: ranked ? ticket.rating + spread : 0,
         maps: prefs.maps, ignored: prefs.ignored });
+    if (ranked && queueId === "1v1" && !party) this.notify((d) => d.playerLooking({ name: player.name, rating: ticket.rating }));
     this.tick();
   }
 
@@ -621,6 +623,16 @@ export class Matchmaker {
     for (const match of this.matches.values())
       if (match.state === "playing" && match.firstReportAt && now - match.firstReportAt > this.corroborationMs) this.resolve(match, true);
     if (now - this.banCheckAt >= this.moderation.config.sweepSeconds * 1000) this.checkNewBans(now);
+  }
+
+  // Discord notices go out in the background; nothing about them may hold up or break a match.
+  notify(post) {
+    if (!this.discord?.enabled) return;
+    try {
+      post(this.discord).catch(() => {});
+    } catch (error) {
+      this.log.event("warn", "discord_failed", { error: error.message });
+    }
   }
 
   // ---- moderation: bans that close connections, kicks, broadcasts ------------------------------------------------
@@ -902,6 +914,11 @@ export class Matchmaker {
     this.log(`[matchmaking] ${match.id} ${status}${timedOut ? " (corroboration timeout)" : ""}: ${JSON.stringify(named)}`);
     for (const p of match.participants)
       this.sendTo(p.playerId, { t: "result_recorded", match: match.id, status, winners, ranked: match.ranked, places, ratings: named });
+    if (match.ranked && match.queueId === "1v1" && status === "completed" && match.participants.length === 2 && !match.ai?.length) {
+      const [winner, loser] = [...match.participants].sort((x, y) => (ratings[y.playerId].outcome === "win") - (ratings[x.playerId].outcome === "win"));
+      const side = (p) => ({ name: p.name, after: ratings[p.playerId].after, change: ratings[p.playerId].change });
+      this.notify((d) => d.matchCompleted({ id: match.id, map: match.map?.name, winner: side(winner), loser: side(loser) }));
+    }
     this.matches.delete(match.id);
     this.refreshPresence();
   }

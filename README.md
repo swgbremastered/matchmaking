@@ -27,6 +27,7 @@ It is a fork of the server side of [Empire League](https://github.com/ForgeableS
   and lobbies, recent results, the reports queue with ban / mute / dismiss, bans and mutes, the audit log, a broadcast.
 - **Public pages**: an optional read-only listener (off by default) with leaderboards, profiles, match results,
   tournaments, as minimal HTML and as JSON.
+- **Discord**: optional webhook posts when someone waits in the ranked 1v1 queue and when a ranked 1v1 result is in.
 - **Hosting**: TLS on the control link with certificate reload, abuse limits, replay retention, JSON-line logs, a
   health check, online backups, a container image.
 
@@ -255,6 +256,16 @@ Only what any logged-in player already sees in the game: never an address, an ac
 moderation record or the hidden casual ratings. GET and HEAD only; `Cache-Control: public, max-age=web.cacheSeconds`;
 the JSON has `Access-Control-Allow-Origin: *` (community sites may read it); at most `web.requestsPerMinute` per address
 (429 with `Retry-After`).
+
+## Discord notices
+
+`discord.webhookUrl` (a channel webhook, `https://` only; empty by default: off) turns on two posts, after Empire
+League's notifier: "Looking for a ranked 1v1" when a player (not a party) joins the ranked 1v1 queue
+(`discord.queueNotices`), and "Ranked 1v1 result" with both new ratings and the map when a ranked 1v1 result is
+confirmed (`discord.resultNotices`; it links to the public match page when `discord.siteUrl` is set). Names are
+escaped and mentions are switched off; no address, report or moderation detail is ever posted. At most
+`discord.perPlayerPerHour` posts name one player. Posts go out one at a time in the background with retries on 429 /
+5xx; a failure is logged (`discord_failed`) and never affects a match.
 
 ## Protocol
 
