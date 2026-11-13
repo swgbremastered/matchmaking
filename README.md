@@ -30,6 +30,7 @@ It is a fork of the server side of [Empire League](https://github.com/ForgeableS
 - **Discord**: optional webhook posts when someone waits in the ranked 1v1 queue and when a ranked 1v1 result is in.
 - **Tournaments**: single-elimination 1v1 brackets made by staff, with a registration window, an optional password and
   rating cap, seeding by rating, server-made matches per round, walkovers and tournament chat.
+- **Seasons** (off by default): calendar quarters; each season's ratings are kept and then soft-reset.
 - **Hosting**: TLS on the control link with certificate reload, abuse limits, replay retention, JSON-line logs, a
   health check, online backups, a container image.
 
@@ -300,6 +301,22 @@ game and the usual `result` flow. Tournament games change no rating.
 - Not done yet: team tournaments, double elimination, spectating a tournament match (the game has no observer slot in
   the server's brokering), check-in before the start.
 
+## Seasons
+
+Off unless `seasons.enabled`. A season is a calendar quarter in UTC (`2026-Q4`). The server opens the current one
+when it first runs with seasons on; when a quarter has ended (checked every `seasons.checkMinutes`) it keeps every
+shown rating (solo, team, FFA) of each player who played that season as a record (rating, peak, wins, losses, rank)
+and soft-resets the rating to `1000 + (rating - 1000) * seasons.softReset` (0.5 by default), with peak, wins, losses
+and streak starting again. Hidden casual ratings are not touched.
+
+- `seasons` -> `seasons {enabled, current, seasons: [{id, startedAt, closedAt}]}`; `season {season, pool}` ->
+  `season {season, pool, rows: [{rank, name, rating, peak, wins, losses, division}]}` (a closed season's final
+  standings); `season_records {name?}` -> `season_records {name, records: [{season, pool, rating, peak, wins, losses,
+  rank, division}]}`.
+- Public: `/seasons`, `/seasons/ID/POOL` (and under `/api`); a player's page lists past seasons.
+- Tables `seasons`, `season_records` (new). The reset itself writes the `ratings` rows, so rolling back to an older
+  image after a reset keeps the reset ratings (the records stay in the new tables).
+
 ## Protocol
 
 Newline-delimited JSON on the TCP port; every message has `t`. Requests: `hello`, `register`, `login`, `resume`,
@@ -310,13 +327,14 @@ Newline-delimited JSON on the TCP port; every message has `t`. Requests: `hello`
 `replay_get`, `room_kick`, `room_move`, `room_slot`, `room_host`, `host_addr`, `punch_request`, `relay_request`, `link`, `result`, `report_player`, `mod_ban`, `mod_unban`,
 `mod_mute`, `mod_unmute`, `mod_kick`, `mod_role`, `mod_broadcast`, `mod_reports`, `mod_report_resolve`, `mod_bans`,
 `mod_mutes`, `mod_audit`, `mod_lookup`, `tournaments`, `tournament_get`, `tournament_create`, `tournament_start`,
-`tournament_cancel`, `tournament_set_winner`, `tournament_join`, `tournament_leave`, `tournament_chat`. Events: `welcome`, `auth`, `profile`,
+`tournament_cancel`, `tournament_set_winner`, `tournament_join`, `tournament_leave`, `tournament_chat`, `seasons`,
+`season`, `season_records`. Events: `welcome`, `auth`, `profile`,
 `leaderboard`, `maps`, `weekly`, `queue`, `match_found`, `match_accepted`, `match_cancelled`, `match_start`,
 `match_resumed`, `connect`, `punch`, `relay`, `rooms`, `room`, `chat`, `friends`, `friend_request`, `presence`, `dm`,
 `dm_history`, `party`, `party_invite`, `party_invite_closed`, `party_chat`, `history`, `replay_chunk`,
 `replay_stored`, `result_recorded`, `room_kicked`, `banned`, `kicked`, `muted`, `unmuted`, `broadcast`, `report_filed`, `mod_report`,
 `mod_done`, `mod_reports`, `mod_bans`, `mod_mutes`, `mod_audit`, `mod_lookup`, `tournaments`, `tournament`,
-`tournament_chat`, `tournament_disputed`, `error`.
+`tournament_chat`, `tournament_disputed`, `seasons`, `season`, `season_records`, `error`.
 
 A connection whose first line is `{"t":"relay","token":...}` becomes a byte pipe to its partner. On the UDP port the
 rendezvous takes `{"t":"reg","token","slot"}` and answers `{"t":"wait"}` until both sides are there, then

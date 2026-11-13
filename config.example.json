@@ -97,5 +97,10 @@
     "retrySeconds": 30,
     "defaultNoShowMinutes": 10,
     "maxOpen": 20
+  },
+  "seasons": {
+    "enabled": false,
+    "softReset": 0.5,
+    "checkMinutes": 10
   }
 }

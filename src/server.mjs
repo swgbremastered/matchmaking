@@ -37,7 +37,7 @@ if (c.tls.enabled) {
   certs.start();
 }
 const mm = new Matchmaker({ store, catalog, host: c.host, port: c.port, minQueueMs: c.minQueueMs, ffaPlayers: c.ffaPlayers,
-  acceptMs: c.acceptMs, corroborationMs: c.corroborationMs, log, tls: certs, limits: c.limits, replays: c.replays, messages: c.messages, moderation: c.moderation, tournaments: c.tournaments,
+  acceptMs: c.acceptMs, corroborationMs: c.corroborationMs, log, tls: certs, limits: c.limits, replays: c.replays, messages: c.messages, moderation: c.moderation, tournaments: c.tournaments, seasons: c.seasons,
   discord: c.discord.webhookUrl ? new DiscordNotifier({ config: c.discord, log }) : null });
 await mm.start();
 let health = null;

@@ -102,6 +102,11 @@ export const DEFAULTS = Object.freeze({
     retrySeconds: 30,              // a tournament match not taken up is offered again after this
     defaultNoShowMinutes: 10,      // a player not there this long after their match is ready loses by walkover
     maxOpen: 20                    // tournaments in registration or running at once
+  },
+  seasons: {
+    enabled: false,                // calendar quarters (UTC); at a quarter's end ratings are kept and soft-reset
+    softReset: 0.5,                // the new rating: start + (old - start) * softReset (0: everyone back to the start)
+    checkMinutes: 10
   }
 });
 
@@ -179,5 +184,7 @@ export function validate(c) {
   for (const k of ["perPlayerPerHour", "timeoutMs"]) posInt(c.discord[k], `discord.${k}`);
   for (const k of ["maxPlayers", "retrySeconds", "defaultNoShowMinutes", "maxOpen"]) posInt(c.tournaments[k], `tournaments.${k}`);
   if (c.tournaments.maxPlayers < 2 || c.tournaments.maxPlayers > 256) throw new Error("tournaments.maxPlayers is 2 to 256");
+  if (!(c.seasons.softReset >= 0 && c.seasons.softReset <= 1)) throw new Error("seasons.softReset is 0 to 1");
+  posInt(c.seasons.checkMinutes, "seasons.checkMinutes");
   if (!["debug", "info", "warn", "error"].includes(c.log.level)) throw new Error("log.level: debug | info | warn | error");
 }

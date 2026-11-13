@@ -88,6 +88,7 @@ export class PublicWeb {
     if (head === "matches" && id && !tail) return this.match(id);
     if (head === "matches" && id && tail === "replay" && !json) return this.replay(id);
     if (head === "tournaments" && this.mm?.tournaments) return id ? this.tournament(id) : this.tournamentList();
+    if (head === "seasons" && this.mm?.seasons) return id ? this.season(id, tail ?? "solo") : this.seasonList();
     throw new HttpError(404, "not found");
   }
 
@@ -112,12 +113,14 @@ ${rows.map((r) => `<tr><td>${r.rank}</td><td><a href="/players/${encodeURICompon
     if (!found) throw new HttpError(404, "no such player");
     const ratings = found.ratings;
     const recent = this.store.history(found.id, 20).map((m) => this.publicMatch(m));
-    const data = { name: found.name, ratings, recent };
+    const seasons = this.mm?.seasons ? this.mm.seasons.records(found.id) : [];
+    const data = { name: found.name, ratings, recent, seasons };
     return {
       title: found.name, data,
       html: `<h1>${esc(found.name)}</h1><table><tr><th>Pool</th><th>Rating</th><th>Peak</th><th>Division</th><th>Rank</th><th>W</th><th>L</th></tr>
 ${Object.entries(ratings).map(([pool, r]) => `<tr><td>${esc(pool)}</td><td>${r.rating}</td><td>${r.peak}</td><td>${esc(r.division)}</td><td>${r.rank}</td><td>${r.wins}</td><td>${r.losses}</td></tr>`).join("")}</table>
-<h2>Recent matches</h2>${this.matchTable(recent)}`
+<h2>Recent matches</h2>${this.matchTable(recent)}
+${seasons.length ? `<h2>Past seasons</h2><table><tr><th>Season</th><th>Pool</th><th>Rating</th><th>Rank</th><th>W</th><th>L</th></tr>${seasons.map((s) => `<tr><td>${esc(s.season)}</td><td>${esc(s.pool)}</td><td>${s.rating}</td><td>${s.rank}</td><td>${s.wins}</td><td>${s.losses}</td></tr>`).join("")}</table>` : ""}`
     };
   }
 
@@ -155,6 +158,21 @@ ${data.replay ? `<p><a href="${esc(data.replayUrl)}">Download the replay</a> (${
     const r = this.store.replay(id);
     if (!r) throw new HttpError(404, "no replay for that match");
     return { raw: r.data, filename: `${String(id).replace(/[^A-Za-z0-9_.-]/g, "_")}.mgx` };
+  }
+
+  seasonList() {
+    const seasons = this.mm.seasons.list();
+    return { title: "Seasons", data: { current: this.mm.seasons.current(), seasons },
+      html: `<h1>Seasons</h1>${seasons.length ? `<ul>${seasons.map((s) => `<li>${s.closedAt ? `<a href="/seasons/${encodeURIComponent(s.id)}/solo">${esc(s.id)}</a>` : `${esc(s.id)} (running)`}</li>`).join("")}</ul>` : "<p>No seasons.</p>"}` };
+  }
+
+  season(id, pool) {
+    if (!POOLS.includes(pool)) throw new HttpError(404, "no such leaderboard");
+    if (!this.mm.seasons.list().some((s) => s.id === id)) throw new HttpError(404, "no such season");
+    const rows = this.mm.seasons.standings(id, pool, 100);
+    return { title: `Season ${id}`, data: { season: id, pool, rows },
+      html: `<h1>Season ${esc(id)}: ${esc(pool)}</h1><table><tr><th>#</th><th>Player</th><th>Rating</th><th>W</th><th>L</th></tr>
+${rows.map((r) => `<tr><td>${r.rank}</td><td><a href="/players/${encodeURIComponent(r.name)}">${esc(r.name)}</a></td><td>${r.rating}</td><td>${r.wins}</td><td>${r.losses}</td></tr>`).join("")}</table>` };
   }
 
   tournamentList() {

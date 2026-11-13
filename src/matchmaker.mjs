@@ -31,6 +31,7 @@ import { TokenBucket, WindowLimiter } from "./limits.mjs";
 import { asLogger } from "./log.mjs";
 import { Moderation } from "./moderation.mjs";
 import { Tournaments } from "./tournaments.mjs";
+import { Seasons } from "./seasons.mjs";
 
 const REPLAY_CHUNK = 24 * 1024;          // raw bytes per replay chunk (base64 keeps a line under maxLineBytes)
 const REPLAY_MAX = 32 * 1024 * 1024;     // the largest replay kept (without a `replays` option)
@@ -59,7 +60,7 @@ const roomSettings = (s = {}, base = { popCap: 75, startAge: 1, reveal: false })
 export class Matchmaker {
   constructor({ store, catalog, host = "127.0.0.1", port = 4317, minQueueMs = 15_000, ffaPlayers = 4, acceptMs = 30_000,
     corroborationMs = 60_000, weeklyRotation = WEEKLY_ROTATION, now = () => Date.now(), log = console.log,
-    tls: tlsSource = null, limits = {}, replays = {}, messages = {}, moderation = {}, discord = null, tournaments = {} } = {}) {
+    tls: tlsSource = null, limits = {}, replays = {}, messages = {}, moderation = {}, discord = null, tournaments = {}, seasons = {} } = {}) {
     this.store = store;
     this.catalog = catalog;
     this.host = host;
@@ -104,7 +105,8 @@ export class Matchmaker {
     this.banCheckAt = now();       // bans made elsewhere (the command line) since then are enforced on the next check
     this.discord = discord;        // a DiscordNotifier, or null
     this.tournaments = new Tournaments({ mm: this, config: tournaments });
-    this.extensions = [this.moderation, this.tournaments];  // more request handlers: handle(conn, m) -> true when it was theirs
+    this.seasons = new Seasons({ store, config: seasons, now, log: this.log });
+    this.extensions = [this.moderation, this.tournaments, { handle: (conn, m) => this.seasons.handle(this, conn, m) }];  // more request handlers: handle(conn, m) -> true when it was theirs
   }
 
   // With port 0 (tests) the UDP port is picked first and the TCP port takes the same number: a TCP pick
@@ -627,6 +629,7 @@ export class Matchmaker {
       if (match.state === "playing" && match.firstReportAt && now - match.firstReportAt > this.corroborationMs) this.resolve(match, true);
     if (now - this.banCheckAt >= this.moderation.config.sweepSeconds * 1000) this.checkNewBans(now);
     this.tournaments.tick(now);
+    this.seasons.tick(now);
   }
 
   // A match the server makes itself (a tournament's): offered to both players like a queue match (match_found,
