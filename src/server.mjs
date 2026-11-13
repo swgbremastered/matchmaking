@@ -16,6 +16,7 @@ import { CertWatcher } from "./tls.mjs";
 import { HealthServer } from "./health.mjs";
 import { grantConfigAdmins } from "./moderation.mjs";
 import { AdminServer } from "./admin-web.mjs";
+import { PublicWeb } from "./public-web.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { config: c, file } = loadConfig(process.argv.slice(2));
@@ -57,6 +58,16 @@ if (c.admin.enabled) {
     log.event("error", "admin_failed", { host: c.admin.host, port: c.admin.port, error: error.code ?? error.message });
   }
 }
+let web = null;
+if (c.web.enabled) {
+  try {
+    web = await new PublicWeb({ store, mm, config: c.web, log }).start();
+    log.event("info", "web_listening", { host: c.web.host, port: web.port });
+  } catch (error) {
+    web = null;
+    log.event("error", "web_failed", { host: c.web.host, port: c.web.port, error: error.code ?? error.message });
+  }
+}
 let stopping = false;
 const stop = async (signal) => {
   if (stopping) return;
@@ -65,6 +76,7 @@ const stop = async (signal) => {
   certs?.stop();
   await health?.stop();
   await admin?.stop();
+  await web?.stop();
   await mm.stop();
   store.close();
   process.exit(0);

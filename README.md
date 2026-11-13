@@ -25,6 +25,8 @@ It is a fork of the server side of [Empire League](https://github.com/ForgeableS
   for a logged-in moderator and from the server's shell (`src/admin.mjs`).
 - **Admin dashboard**: an HTTP page of its own (off by default, 127.0.0.1): online players, queues, live matches
   and lobbies, recent results, the reports queue with ban / mute / dismiss, bans and mutes, the audit log, a broadcast.
+- **Public pages**: an optional read-only listener (off by default) with leaderboards, profiles, match results,
+  tournaments, as minimal HTML and as JSON.
 - **Hosting**: TLS on the control link with certificate reload, abuse limits, replay retention, JSON-line logs, a
   health check, online backups, a container image.
 
@@ -236,6 +238,23 @@ The session is a random token kept in memory (a restart logs everyone out) in a 
 and every request checks again that the account is still an admin. Log-in attempts are limited per address
 (`admin.loginPerIpPerMinute`) and share the game's lock-out per account name. Pages are sent with a strict
 Content-Security-Policy, `X-Frame-Options: DENY` and `Cache-Control: no-store`.
+
+## Public pages and API
+
+`web.enabled: true` starts a read-only HTTP listener on `web.host:web.port` (127.0.0.1:4320):
+
+| Page | JSON | What |
+|---|---|---|
+| `/leaderboard/solo` (`team`, `ffa`; `?limit=` up to 100) | `/api/leaderboard/solo` | `{pool, rows: [{rank, name, rating, wins, losses, streak, division}]}` |
+| `/players/NAME` | `/api/players/NAME` | `{name, ratings: {pool: {rating, peak, wins, losses, streak, division, rank}}, recent: [match]}` |
+| `/matches/ID` | `/api/matches/ID` | `{id, kind, queue, pool, map, ranked, week, status, createdAt, completedAt, replay, replayUrl?, players: [{name, slot, team, outcome, ratingBefore, ratingAfter}]}` |
+| `/matches/ID/replay` | | the stored replay as a download, only with `web.replays: true` |
+| `/tournaments`, `/tournaments/ID` | `/api/tournaments`, `/api/tournaments/ID` | the tournaments and their brackets |
+
+Only what any logged-in player already sees in the game: never an address, an account id, a session, a report, a
+moderation record or the hidden casual ratings. GET and HEAD only; `Cache-Control: public, max-age=web.cacheSeconds`;
+the JSON has `Access-Control-Allow-Origin: *` (community sites may read it); at most `web.requestsPerMinute` per address
+(429 with `Retry-After`).
 
 ## Protocol
 

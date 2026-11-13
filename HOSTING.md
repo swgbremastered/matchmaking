@@ -14,6 +14,7 @@ The game client has a built-in default server address. To use your server instea
 | 4317 | TCP | the control link (TLS: log-in, queues, lobbies, chat, results, replays) and the relay (plain: the game's own frames) | yes |
 | 4317 | UDP | the hole-punch rendezvous | yes |
 | 4318 | TCP (HTTP) | `GET /health`, the status as JSON | no: 127.0.0.1 inside the container only (Docker's health check) |
+| 4320 | TCP (HTTP) | the public pages and JSON API (`web.enabled`, off by default) | through a TLS reverse proxy, if you want them public |
 | 4319 | TCP (HTTP) | the admin dashboard (`admin.enabled`, off by default) | no: the host's 127.0.0.1 only, reached over SSH or a TLS reverse proxy |
 
 - **TLS**: the server speaks TLS 1.2+ on its TCP port. The game client checks the certificate against the Windows
@@ -179,6 +180,14 @@ Then either reach it through an SSH tunnel (`ssh -L 4319:127.0.0.1:4319 you@swgb
 `https://admin.swgb.example.com/` -> `http://127.0.0.1:4319`) and set `"trustProxy": true` so the session cookie is
 marked `Secure` and the per-address log-in limit sees the real address. Never publish 4319 on a public address
 without TLS: the admin password would cross in the clear.
+
+### The public pages
+
+Off by default. To publish them, turn them on (`"web": {"enabled": true, "host": "0.0.0.0", "trustProxy": true}`),
+publish `127.0.0.1:4320:4320/tcp`, and serve them through a TLS reverse proxy on the same host (for example
+`https://stats.swgb.example.com/` -> `http://127.0.0.1:4320`), which should replace any `X-Forwarded-For` the client
+sent. Replays stay private unless `web.replays` is true. The pages are cacheable for `web.cacheSeconds`, so a caching
+proxy or CDN in front takes most of the load.
 
 ## 8. Upgrades and rollback
 

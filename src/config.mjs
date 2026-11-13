@@ -79,6 +79,15 @@ export const DEFAULTS = Object.freeze({
     trustProxy: false,             // behind a reverse proxy on the same host: take X-Forwarded-For / -Proto from it
     sessionHours: 12,
     loginPerIpPerMinute: 10
+  },
+  web: {
+    enabled: false,                // the public read-only pages and JSON API (leaderboards, profiles, matches, tournaments)
+    host: "127.0.0.1",
+    port: 4320,
+    trustProxy: false,             // behind a reverse proxy: the rate limit takes the address from X-Forwarded-For
+    requestsPerMinute: 60,         // per address
+    cacheSeconds: 30,              // Cache-Control max-age
+    replays: false                 // true: /matches/<id>/replay downloads the stored replay
   }
 });
 
@@ -151,5 +160,6 @@ export function validate(c) {
   if (!["auto", true, false].includes(c.admin.secureCookie)) throw new Error('admin.secureCookie: "auto" | true | false');
   if (!(c.admin.sessionHours > 0)) throw new Error("admin.sessionHours must be above 0");
   posInt(c.admin.loginPerIpPerMinute, "admin.loginPerIpPerMinute");
+  for (const k of ["port", "requestsPerMinute", "cacheSeconds"]) posInt(c.web[k], `web.${k}`);
   if (!["debug", "info", "warn", "error"].includes(c.log.level)) throw new Error("log.level: debug | info | warn | error");
 }

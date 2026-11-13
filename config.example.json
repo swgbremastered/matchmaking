@@ -74,5 +74,14 @@
     "trustProxy": false,
     "sessionHours": 12,
     "loginPerIpPerMinute": 10
+  },
+  "web": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 4320,
+    "trustProxy": false,
+    "requestsPerMinute": 60,
+    "cacheSeconds": 30,
+    "replays": false
   }
 }
