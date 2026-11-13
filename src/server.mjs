@@ -15,6 +15,7 @@ import { createLogger } from "./log.mjs";
 import { CertWatcher } from "./tls.mjs";
 import { HealthServer } from "./health.mjs";
 import { grantConfigAdmins } from "./moderation.mjs";
+import { AdminServer } from "./admin-web.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { config: c, file } = loadConfig(process.argv.slice(2));
@@ -46,6 +47,16 @@ if (c.health.enabled) {
     log.event("error", "health_failed", { host: c.health.host, port: c.health.port, error: error.code ?? error.message });
   }
 }
+let admin = null;
+if (c.admin.enabled) {
+  try {  // like the health port: a busy admin port leaves the game service running
+    admin = await new AdminServer({ mm, config: c.admin, log }).start();
+    log.event("info", "admin_listening", { host: c.admin.host, port: admin.port });
+  } catch (error) {
+    admin = null;
+    log.event("error", "admin_failed", { host: c.admin.host, port: c.admin.port, error: error.code ?? error.message });
+  }
+}
 let stopping = false;
 const stop = async (signal) => {
   if (stopping) return;
@@ -53,6 +64,7 @@ const stop = async (signal) => {
   log.event("info", "stopping", { signal });
   certs?.stop();
   await health?.stop();
+  await admin?.stop();
   await mm.stop();
   store.close();
   process.exit(0);

@@ -191,6 +191,32 @@ export class Matchmaker {
     };
   }
 
+  // What the admin dashboard shows: who is online, the queues, live matches and lobbies, recent results.
+  overview() {
+    const now = this.now();
+    const queues = new Map();
+    for (const t of this.queue.tickets.values()) {
+      const key = `${t.lane}|${t.queueId}`;
+      const q = queues.get(key) ?? { lane: t.lane, queue: t.queueId, tickets: 0, players: 0, longestWaitS: 0 };
+      q.tickets += 1;
+      q.players += t.members?.length ?? 1;
+      q.longestWaitS = Math.max(q.longestWaitS, Math.round((now - t.joinedAt) / 1000));
+      queues.set(key, q);
+    }
+    return {
+      uptimeS: Math.round((now - this.startedAt) / 1000),
+      online: [...this.online.values()].map((c) => ({ name: c.player.name, presence: this.presenceOf(c.player.id), role: this.store.mod.role(c.player.id) }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      queues: [...queues.values()],
+      matches: [...this.matches.values()].map((m) => ({ id: m.id, kind: m.kind, queue: m.queueId, ranked: m.ranked, map: m.map?.name, state: m.state,
+        players: m.participants.map((p) => p.name), ai: m.ai?.length ?? 0 })),
+      rooms: [...this.rooms.values()].map((r) => ({ id: r.id, name: r.name, players: r.players.length, capacity: this.roomCapacity(r),
+        locked: Boolean(r.password), status: r.status })),
+      recent: this.store.recentMatches(15),
+      openReports: this.store.mod.openReportCount()
+    };
+  }
+
   // ---- connections -------------------------------------------------------------------------------------------------
   accept(socket) {
     const ip = ipOf(socket);

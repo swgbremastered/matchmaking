@@ -23,6 +23,8 @@ It is a fork of the server side of [Empire League](https://github.com/ForgeableS
 - **Moderation**: roles (player, moderator, admin), timed or permanent bans by account and optionally by address,
   timed mutes of chat and direct messages, player reports, an audit log of every moderator action; over the protocol
   for a logged-in moderator and from the server's shell (`src/admin.mjs`).
+- **Admin dashboard**: an HTTP page of its own (off by default, 127.0.0.1): online players, queues, live matches
+  and lobbies, recent results, the reports queue with ban / mute / dismiss, bans and mutes, the audit log, a broadcast.
 - **Hosting**: TLS on the control link with certificate reload, abuse limits, replay retention, JSON-line logs, a
   health check, online backups, a container image.
 
@@ -215,6 +217,25 @@ connections. Mutes and roles apply at once.
 The tables (`player_roles`, `player_addresses`, `bans`, `mutes`, `reports`, `audit_log`) are new ones, so an older
 image of the server still opens the database. `player_addresses` keeps each account's last log-in address, for address
 bans of a player who is offline; it is shown to admins only.
+
+## Admin dashboard
+
+`admin.enabled: true` starts it on `admin.host:admin.port` (127.0.0.1:4319). Log in with an admin account's own name
+and password. No scripts: server-rendered pages and forms.
+
+- `/admin`: online players (kick), queues, live matches, lobbies, recent results, a broadcast to everyone online.
+- `/admin/reports`: the reports queue (open / actioned / dismissed / all); ban or mute the reported player (the report
+  becomes actioned) or dismiss it with a note.
+- `/admin/sanctions`: active bans and mutes (lift), ban / mute / set a moderator by name, the staff list.
+- `/admin/audit`: the audit log, newest first.
+- `/admin/api/overview`: the overview as JSON (same session).
+
+The session is a random token kept in memory (a restart logs everyone out) in a cookie that is `HttpOnly`,
+`SameSite=Strict`, `Path=/admin` and, with `admin.secureCookie: "auto"`, `Secure` whenever the request came over TLS
+(with `admin.trustProxy`, a reverse proxy's `X-Forwarded-Proto: https`); every form carries the session's CSRF token,
+and every request checks again that the account is still an admin. Log-in attempts are limited per address
+(`admin.loginPerIpPerMinute`) and share the game's lock-out per account name. Pages are sent with a strict
+Content-Security-Policy, `X-Frame-Options: DENY` and `Cache-Control: no-store`.
 
 ## Protocol
 

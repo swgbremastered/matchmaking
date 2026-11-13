@@ -70,6 +70,15 @@ export const DEFAULTS = Object.freeze({
     moderatorMaxBanDays: 30,       // the longest ban a moderator gives (admins: any, or permanent)
     moderatorMaxMuteDays: 30,
     sweepSeconds: 15               // how often bans made by src/admin.mjs are looked for (online players are closed)
+  },
+  admin: {
+    enabled: false,                // the admin dashboard (HTTP); see HOSTING.md before opening it to anything
+    host: "127.0.0.1",
+    port: 4319,
+    secureCookie: "auto",          // "auto": Secure when the request came over TLS (trustProxy: X-Forwarded-Proto); true; false
+    trustProxy: false,             // behind a reverse proxy on the same host: take X-Forwarded-For / -Proto from it
+    sessionHours: 12,
+    loginPerIpPerMinute: 10
   }
 });
 
@@ -138,5 +147,9 @@ export function validate(c) {
   if (!Array.isArray(c.moderation.admins) || c.moderation.admins.some((n) => typeof n !== "string")) throw new Error("moderation.admins must be a list of names");
   for (const k of ["reportsPerHour", "reportMax", "reasonMax", "moderatorMaxBanDays", "moderatorMaxMuteDays", "sweepSeconds"]) posInt(c.moderation[k], `moderation.${k}`);
   if (c.moderation.sweepSeconds < 1) throw new Error("moderation.sweepSeconds must be at least 1");
+  posInt(c.admin.port, "admin.port");
+  if (!["auto", true, false].includes(c.admin.secureCookie)) throw new Error('admin.secureCookie: "auto" | true | false');
+  if (!(c.admin.sessionHours > 0)) throw new Error("admin.sessionHours must be above 0");
+  posInt(c.admin.loginPerIpPerMinute, "admin.loginPerIpPerMinute");
   if (!["debug", "info", "warn", "error"].includes(c.log.level)) throw new Error("log.level: debug | info | warn | error");
 }

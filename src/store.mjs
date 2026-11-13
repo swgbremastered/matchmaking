@@ -262,6 +262,29 @@ export class Store {
     }));
   }
 
+  matchPlayers(matchId) {
+    return this.db.prepare(`SELECT p.name, mp.slot, mp.team, mp.outcome, mp.rating_before AS ratingBefore, mp.rating_after AS ratingAfter
+                            FROM match_players mp JOIN players p ON p.id = mp.player_id WHERE mp.match_id = ? ORDER BY mp.slot`)
+      .all(matchId).map((x) => ({ ...x }));
+  }
+
+  // Finished matches, newest first, with their players (no reports, no addresses).
+  recentMatches(limit = 20) {
+    return this.db.prepare(`SELECT m.id, m.kind, m.queue, m.pool, m.map_id AS map, m.ranked, m.week, m.status,
+             m.created_at AS createdAt, m.completed_at AS completedAt FROM matches m
+      WHERE m.completed_at IS NOT NULL ORDER BY m.completed_at DESC, m.id LIMIT ?`).all(limit)
+      .map((r) => ({ ...r, ranked: Boolean(r.ranked), players: this.matchPlayers(r.id) }));
+  }
+
+  // One match as the public pages show it, or null.
+  matchDetail(matchId) {
+    const r = this.db.prepare(`SELECT m.id, m.kind, m.queue, m.pool, m.map_id AS map, m.ranked, m.week, m.status,
+             m.created_at AS createdAt, m.completed_at AS completedAt, (SELECT size FROM replays x WHERE x.match_id = m.id) AS replaySize
+      FROM matches m WHERE m.id = ?`).get(String(matchId ?? ""));
+    if (!r) return null;
+    return { ...r, ranked: Boolean(r.ranked), replay: r.replaySize !== null, replaySize: r.replaySize ?? 0, players: this.matchPlayers(r.id) };
+  }
+
   inMatch(matchId, playerId) {
     return Boolean(this.db.prepare("SELECT 1 FROM match_players WHERE match_id = ? AND player_id = ?").get(matchId, playerId));
   }

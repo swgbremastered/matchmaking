@@ -14,6 +14,7 @@ The game client has a built-in default server address. To use your server instea
 | 4317 | TCP | the control link (TLS: log-in, queues, lobbies, chat, results, replays) and the relay (plain: the game's own frames) | yes |
 | 4317 | UDP | the hole-punch rendezvous | yes |
 | 4318 | TCP (HTTP) | `GET /health`, the status as JSON | no: 127.0.0.1 inside the container only (Docker's health check) |
+| 4319 | TCP (HTTP) | the admin dashboard (`admin.enabled`, off by default) | no: the host's 127.0.0.1 only, reached over SSH or a TLS reverse proxy |
 
 - **TLS**: the server speaks TLS 1.2+ on its TCP port. The game client checks the certificate against the Windows
   certificate store and the host name it was given. A plain connection may only open a relay, so no password ever
@@ -158,6 +159,26 @@ docker exec swgb-matchmaking node src/admin.mjs role YOURNAME admin
 admin). Admins make moderators in the game (`mod_role`), on the admin dashboard, or with `src/admin.mjs role NAME
 moderator`. `src/admin.mjs` also bans, mutes and lists reports and the audit log (see README.md); it works while the
 server runs.
+
+### The admin dashboard
+
+It is off by default and listens on 127.0.0.1. In the container, turn it on and let it listen on the container's
+address, but publish it on the host's loopback only:
+
+```json
+{ "admin": { "enabled": true, "host": "0.0.0.0" } }
+```
+
+```yaml
+    ports:
+      - "127.0.0.1:4319:4319/tcp"
+```
+
+Then either reach it through an SSH tunnel (`ssh -L 4319:127.0.0.1:4319 you@swgb.example.com`, open
+`http://127.0.0.1:4319/admin`), or put a TLS reverse proxy on the same host in front of it (for example
+`https://admin.swgb.example.com/` -> `http://127.0.0.1:4319`) and set `"trustProxy": true` so the session cookie is
+marked `Secure` and the per-address log-in limit sees the real address. Never publish 4319 on a public address
+without TLS: the admin password would cross in the clear.
 
 ## 8. Upgrades and rollback
 

@@ -65,5 +65,14 @@
     "moderatorMaxBanDays": 30,
     "moderatorMaxMuteDays": 30,
     "sweepSeconds": 15
+  },
+  "admin": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 4319,
+    "secureCookie": "auto",
+    "trustProxy": false,
+    "sessionHours": 12,
+    "loginPerIpPerMinute": 10
   }
 }
