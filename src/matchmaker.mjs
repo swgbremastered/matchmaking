@@ -29,6 +29,7 @@ import { casualPoolForQueue, ratingPoolForQueue } from "./rating-pool.mjs";
 import { WEEKLY_ROTATION, weeklyQueue } from "./weekly.mjs";
 import { TokenBucket, WindowLimiter } from "./limits.mjs";
 import { asLogger } from "./log.mjs";
+import { Moderation } from "./moderation.mjs";
 
 const REPLAY_CHUNK = 24 * 1024;          // raw bytes per replay chunk (base64 keeps a line under maxLineBytes)
 const REPLAY_MAX = 32 * 1024 * 1024;     // the largest replay kept (without a `replays` option)
@@ -53,7 +54,7 @@ const roomSettings = (s = {}, base = { popCap: 75, startAge: 1, reveal: false })
 export class Matchmaker {
   constructor({ store, catalog, host = "127.0.0.1", port = 4317, minQueueMs = 15_000, ffaPlayers = 4, acceptMs = 30_000,
     corroborationMs = 60_000, weeklyRotation = WEEKLY_ROTATION, now = () => Date.now(), log = console.log,
-    tls: tlsSource = null, limits = {}, replays = {}, messages = {} } = {}) {
+    tls: tlsSource = null, limits = {}, replays = {}, messages = {}, moderation = {} } = {}) {
     this.store = store;
     this.catalog = catalog;
     this.host = host;
@@ -93,6 +94,9 @@ export class Matchmaker {
     this.parties = new Map();      // partyId -> { id, leaderId, members: [playerId], invites: Set, messages }
     this.presence = new Map();     // playerId -> the last presence told to friends and party
     this.uploads = new Map();      // "match|player" -> [Buffer]
+    this.moderation = new Moderation({ store, mm: this, now, log: this.log, config: moderation });
+    this.banCheckAt = now();       // bans made elsewhere (the command line) since then are enforced on the next check
+    this.extensions = [this.moderation];  // more request handlers: handle(conn, m) -> true when it was theirs
   }
 
   // With port 0 (tests) the UDP port is picked first and the TCP port takes the same number: a TCP pick
@@ -292,7 +296,7 @@ export class Matchmaker {
       } catch (error) {
         const text = error instanceof Error ? error.message : String(error);
         this.log(`[matchmaking] ${conn.player?.name ?? "(not logged in)"}: ${message.t} refused: ${text}`);
-        this.send(conn, { t: "error", re: message.t, message: text });
+        this.send(conn, { t: "error", re: message.t, message: text, ...(error?.extra ?? {}) });
       }
       this.refreshPresence();  // a request may change a presence (queue, lobby, match)
     }
@@ -344,7 +348,10 @@ export class Matchmaker {
       case "register":
       case "login":
       case "resume": {
+        if (m.t === "register") this.moderation.checkAddress(conn.ip);
         const auth = this.authenticate(conn, m);
+        this.moderation.checkLogin(auth.player.id, conn.ip);
+        this.store.mod.noteAddress(auth.player.id, conn.ip, this.now());
         const previous = this.online.get(auth.player.id);
         if (previous && previous !== conn) {
           this.online.delete(auth.player.id);  // the newer connection takes over (the game after the menu)
@@ -354,7 +361,7 @@ export class Matchmaker {
         this.online.set(auth.player.id, conn);
         clearTimeout(conn.authTimer);
         this.log.event("info", m.t, { player: auth.player.name, ip: conn.ip, tls: conn.secure });
-        this.send(conn, { t: "auth", token: auth.token, player: auth.player });
+        this.send(conn, { t: "auth", token: auth.token, player: auth.player, role: this.store.mod.role(auth.player.id) });
         return this.afterAuth(conn);
       }
       case "profile": {
@@ -457,6 +464,7 @@ export class Matchmaker {
       case "result":
         return this.report(conn, m);
       default:
+        if (this.extensions.some((x) => x.handle(conn, m))) return undefined;
         throw new Error(`unknown request ${m.t}`);
     }
   }
@@ -572,6 +580,44 @@ export class Matchmaker {
     }
     for (const match of this.matches.values())
       if (match.state === "playing" && match.firstReportAt && now - match.firstReportAt > this.corroborationMs) this.resolve(match, true);
+    if (now - this.banCheckAt >= this.moderation.config.sweepSeconds * 1000) this.checkNewBans(now);
+  }
+
+  // ---- moderation: bans that close connections, kicks, broadcasts ------------------------------------------------
+  // Bans written by another process (src/admin.mjs on the same database) reach online players here.
+  checkNewBans(now = this.now()) {
+    const since = this.banCheckAt;
+    this.banCheckAt = now;
+    for (const ban of this.store.mod.bansSince(since - 1, now)) this.enforceBan(ban);
+  }
+
+  enforceBan(ban) {
+    const message = { t: "banned", until: ban.until, reason: ban.reason };
+    if (ban.playerId && this.online.has(ban.playerId)) this.disconnect(ban.playerId, message);
+    if (ban.ip)
+      for (const conn of [...this.online.values()])
+        if (conn.ip === ban.ip && this.store.mod.role(conn.player.id) === "player") this.disconnect(conn.player.id, message);
+  }
+
+  // Tells the player why, then closes the control link (onClose takes them out of queues and lobbies).
+  disconnect(playerId, message) {
+    const conn = this.online.get(playerId);
+    if (!conn) return;
+    this.send(conn, message);
+    this.log.event("info", message.t, { player: conn.player?.name, ip: conn.ip });
+    conn.socket.end();
+    this.onClose(conn);
+  }
+
+  broadcast(text, from) {
+    const message = { t: "broadcast", from, text, at: this.now() };
+    for (const conn of this.online.values()) this.send(conn, message);
+    return this.online.size;
+  }
+
+  // New reports reach the moderators and admins who are online.
+  notifyStaff(message) {
+    for (const [id, conn] of this.online) if (this.store.mod.role(id) !== "player") this.send(conn, message);
   }
 
   proposeMatch(proposal) {
@@ -912,6 +958,7 @@ export class Matchmaker {
     const player = this.requirePlayer(conn);
     const room = this.roomOf(player.id);
     if (!room) throw new Error("not in a lobby");
+    this.moderation.checkChat(player.id, "chat");
     this.chatAllowed(player);
     const text = String(m.text ?? "").slice(0, this.chatMax);
     this.addRoomMessage(room, player.name, text);
@@ -1066,6 +1113,7 @@ export class Matchmaker {
       throw new Error(`${other.name} is not your friend`);
     const text = String(m.text ?? "").slice(0, this.dmMax);
     if (!text) throw new Error("an empty message");
+    this.moderation.checkChat(player.id, "dm");
     this.chatAllowed(player);
     const { id, at } = this.store.addDirectMessage(player.id, other.id, text);
     const message = { t: "dm", from: player.name, to: other.name, text, at };
@@ -1161,6 +1209,7 @@ export class Matchmaker {
     const player = this.requirePlayer(conn);
     const party = this.partyOf(player.id);
     if (!party) throw new Error("not in a party");
+    this.moderation.checkChat(player.id, "chat");
     this.chatAllowed(player);
     const text = String(m.text ?? "").slice(0, this.chatMax);
     party.messages.push({ from: player.name, text, at: this.now() });

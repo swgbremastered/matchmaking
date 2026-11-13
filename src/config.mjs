@@ -60,6 +60,15 @@ export const DEFAULTS = Object.freeze({
   },
   log: {
     level: "info"                  // debug | info | warn | error; JSON lines on stdout
+  },
+  moderation: {
+    admins: [],                    // account names made admins at start (existing accounts only; see README.md)
+    reportsPerHour: 5,             // player reports per reporter
+    reportMax: 300,                // characters in a report's reason
+    reasonMax: 300,                // characters in a ban's or a mute's reason
+    moderatorMaxBanDays: 30,       // the longest ban a moderator gives (admins: any, or permanent)
+    moderatorMaxMuteDays: 30,
+    sweepSeconds: 15               // how often bans made by src/admin.mjs are looked for (online players are closed)
   }
 });
 
@@ -125,5 +134,8 @@ export function validate(c) {
   if (c.accounts.nameMin < 1 || c.accounts.nameMax < c.accounts.nameMin) throw new Error("accounts.nameMin / nameMax");
   if (c.accounts.passwordMin < 1 || c.accounts.passwordMax < c.accounts.passwordMin) throw new Error("accounts.passwordMin / passwordMax");
   if (!Array.isArray(c.accounts.reservedNames)) throw new Error("accounts.reservedNames must be a list");
+  if (!Array.isArray(c.moderation.admins) || c.moderation.admins.some((n) => typeof n !== "string")) throw new Error("moderation.admins must be a list of names");
+  for (const k of ["reportsPerHour", "reportMax", "reasonMax", "moderatorMaxBanDays", "moderatorMaxMuteDays", "sweepSeconds"]) posInt(c.moderation[k], `moderation.${k}`);
+  if (c.moderation.sweepSeconds < 1) throw new Error("moderation.sweepSeconds must be at least 1");
   if (!["debug", "info", "warn", "error"].includes(c.log.level)) throw new Error("log.level: debug | info | warn | error");
 }

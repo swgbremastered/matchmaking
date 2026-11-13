@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { CASUAL_POOLS, POOLS, isCasualPool } from "./rating-pool.mjs";
 import { START_RATING, divisionForRating, ffaRatingChanges, teamRatingChange } from "./elo.mjs";
+import { ModerationStore } from "./moderation-store.mjs";
 
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 // The account rules (config "accounts"); a Store made without them keeps these.
@@ -50,6 +51,7 @@ export class Store {
     const columns = new Set(this.db.prepare("PRAGMA table_info(matches)").all().map((c) => c.name));
     if (!columns.has("casual_pool")) this.db.exec("ALTER TABLE matches ADD COLUMN casual_pool TEXT");
     if (!columns.has("week")) this.db.exec("ALTER TABLE matches ADD COLUMN week TEXT");
+    this.mod = new ModerationStore(this.db);
   }
 
   close() {
@@ -96,6 +98,15 @@ export class Store {
     const given = Buffer.from(hashPassword(String(password ?? ""), row?.pw_salt ?? "x"), "hex");
     if (!row || !timingSafeEqual(given, Buffer.from(row.pw_hash, "hex"))) throw new Error("wrong name or password");
     return this.openSession(row.id);
+  }
+
+  // The password check alone, without a game session (the admin dashboard's log-in): the player's id.
+  verifyPassword(name, password) {
+    if (typeof password !== "string" || password.length > this.rules.passwordMax) throw new Error("wrong name or password");
+    const row = this.db.prepare("SELECT id, pw_salt, pw_hash FROM players WHERE name = ?").get(String(name ?? ""));
+    const given = Buffer.from(hashPassword(password, row?.pw_salt ?? "x"), "hex");
+    if (!row || !timingSafeEqual(given, Buffer.from(row.pw_hash, "hex"))) throw new Error("wrong name or password");
+    return row.id;
   }
 
   openSession(playerId) {

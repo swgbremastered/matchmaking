@@ -140,13 +140,26 @@ consistent copy while the server runs (SQLite `VACUUM INTO`). For example, daily
 15 4 * * * docker exec swgb-matchmaking node src/backup.mjs /data/backups/matchmaking-$(date +\%F).db && docker exec swgb-matchmaking sh -c 'ls -1t /data/backups/*.db | tail -n +15 | xargs -r rm --' && docker cp swgb-matchmaking:/data/backups/. /opt/swgb/backups/
 ```
 
-Include `/opt/swgb/backups` in the host's regular backup. The copies hold password hashes and session-token hashes:
-keep them as private as the database.
+Include `/opt/swgb/backups` in the host's regular backup. The copies hold password hashes, session-token hashes and
+each account's last log-in address (for address bans): keep them as private as the database.
 
 Restore: stop the container, copy a backup into the volume as `/data/matchmaking.db` (remove `matchmaking.db-wal` and
 `matchmaking.db-shm`), start it.
 
-## 7. Upgrades and rollback
+## 7. Moderators and admins
+
+Register your own account in the game first, then make it an admin from the host:
+
+```
+docker exec swgb-matchmaking node src/admin.mjs role YOURNAME admin
+```
+
+(or list the name in the config's `moderation.admins` and restart: only an account that already exists is made an
+admin). Admins make moderators in the game (`mod_role`), on the admin dashboard, or with `src/admin.mjs role NAME
+moderator`. `src/admin.mjs` also bans, mutes and lists reports and the audit log (see README.md); it works while the
+server runs.
+
+## 8. Upgrades and rollback
 
 1. Pick the new image tag (`<version>-<commit>`; each workflow run prints it in its summary).
 2. Take a backup (section 6).

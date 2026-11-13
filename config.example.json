@@ -55,5 +55,14 @@
   },
   "log": {
     "level": "info"
+  },
+  "moderation": {
+    "admins": [],
+    "reportsPerHour": 5,
+    "reportMax": 300,
+    "reasonMax": 300,
+    "moderatorMaxBanDays": 30,
+    "moderatorMaxMuteDays": 30,
+    "sweepSeconds": 15
   }
 }

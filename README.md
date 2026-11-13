@@ -19,6 +19,9 @@ It is a fork of the server side of [Empire League](https://github.com/ForgeableS
 - **Social**: friends with presence, direct messages (kept for offline players), parties that queue together.
 - **Brokering**: a direct connection, then a UDP hole punch, then a TCP relay, whichever comes up first.
 - **Results**: reports from every player, corroboration, contested results, FFA placings, stored replays.
+- **Moderation**: roles (player, moderator, admin), timed or permanent bans by account and optionally by address,
+  timed mutes of chat and direct messages, player reports, an audit log of every moderator action; over the protocol
+  for a logged-in moderator and from the server's shell (`src/admin.mjs`).
 - **Hosting**: TLS on the control link with certificate reload, abuse limits, replay retention, JSON-line logs, a
   health check, online backups, a container image.
 
@@ -151,6 +154,50 @@ the room's rating window), `room_chat`, `room_ready`, `room_leave`, `room_start`
 - **The control link comes back**: `resume {token}` during a running match: the player is no longer counted as gone
   (`match_resumed`), its report counts again.
 
+## Moderation
+
+Three roles: `player` (everyone), `moderator`, `admin`. Nobody acts on an account of their own rank or above.
+Moderators give timed bans (at most `moderation.moderatorMaxBanDays`) and timed mutes, kick, resolve reports, look
+players up and broadcast; admins also give permanent and address bans and make moderators. Admins are made only at the
+server: the config's `moderation.admins` (account names; only accounts that already exist are made admins at start, so
+register the account first; a name not yet registered is never reserved for whoever takes it) or the command line:
+
+```
+node src/admin.mjs role NAME admin            # in the container: docker exec swgb-matchmaking node src/admin.mjs ...
+node src/admin.mjs ban NAME --minutes 1440 --reason "cheating"     # --minutes 0 or none: permanent; --address: also the address
+node src/admin.mjs mute NAME --minutes 60 --scope dm --reason "insults"
+node src/admin.mjs unban NAME | unmute NAME | ban-address IP ... | unban-address IP
+node src/admin.mjs reports [open|dismissed|actioned|all] | resolve ID dismiss|actioned [--note TEXT]
+node src/admin.mjs bans | mutes | staff | audit [N] | lookup NAME
+```
+
+The command line works on the database file (the config's `db`, or `--db FILE`) and acts as the operator (above
+every role); a running server picks up its bans within `moderation.sweepSeconds` and closes those players'
+connections. Mutes and roles apply at once.
+
+- A **banned** player is refused at `login` / `resume` with `{t: "error", message: "you are banned until ... UTC:
+  reason", banned: {until, reason}}` (`until` null: permanent), only after the right password. A player online when
+  banned gets `banned {until, reason}` and the connection closes. An address ban refuses new accounts from that
+  address and every player account logging in from it (moderators and admins excepted, who may share an address).
+- A **muted** player's `room_chat` / `party_chat` (scope `chat`), `dm` (scope `dm`) or both (scope `all`) are refused
+  with `{t: "error", message: "you are muted until ...: reason", muted: {scope, until, reason}}`; `muted {scope, until,
+  reason}` and `unmuted` tell the player.
+- `auth` carries `role`.
+- **Reports**: `report_player {name, reason, match?}` (a match the reporter played) -> `report_filed {id}`; at most
+  `moderation.reportsPerHour` per reporter. Moderators online get `mod_report {report}`.
+- Moderator requests (answered with `mod_done {action, ...}` or the list): `mod_ban {name, minutes, reason, address?}`,
+  `mod_unban {name}`, `mod_mute {name, minutes, scope: chat|dm|all, reason}`, `mod_unmute {name}`, `mod_kick {name,
+  reason}` (-> `kicked {reason}` to the player), `mod_role {name, role: player|moderator}` (admins),
+  `mod_broadcast {text}` (-> `broadcast {from, text, at}` to everyone online), `mod_reports {status?}` ->
+  `mod_reports {reports}`, `mod_report_resolve {id, action: dismiss|actioned, note?}`, `mod_bans` -> `mod_bans {bans}`,
+  `mod_mutes` -> `mod_mutes {mutes}`, `mod_audit {limit?, before?}` -> `mod_audit {entries}`, `mod_lookup {name}` ->
+  `mod_lookup {player: {name, role, online, ban, bans, mutes, reports, address (admins only)}}`. Moderators see that a
+  ban covers an address, not the address.
+
+The tables (`player_roles`, `player_addresses`, `bans`, `mutes`, `reports`, `audit_log`) are new ones, so an older
+image of the server still opens the database. `player_addresses` keeps each account's last log-in address, for address
+bans of a player who is offline; it is shown to admins only.
+
 ## Protocol
 
 Newline-delimited JSON on the TCP port; every message has `t`. Requests: `hello`, `register`, `login`, `resume`,
@@ -158,11 +205,14 @@ Newline-delimited JSON on the TCP port; every message has `t`. Requests: `hello`
 `decline`, `rooms`, `room_create`, `room_join`, `room_leave`, `room_chat`, `room_ready`, `room_start`, `room_set`,
 `room_settings`, `friends`, `friend_add`, `friend_accept`, `friend_remove`, `dm`, `dm_history`, `presence`,
 `party_invite`, `party_accept`, `party_decline`, `party_leave`, `party_chat`, `party_set`, `history`, `replay_chunk`,
-`replay_get`, `host_addr`, `punch_request`, `relay_request`, `link`, `result`. Events: `welcome`, `auth`, `profile`,
+`replay_get`, `host_addr`, `punch_request`, `relay_request`, `link`, `result`, `report_player`, `mod_ban`, `mod_unban`,
+`mod_mute`, `mod_unmute`, `mod_kick`, `mod_role`, `mod_broadcast`, `mod_reports`, `mod_report_resolve`, `mod_bans`,
+`mod_mutes`, `mod_audit`, `mod_lookup`. Events: `welcome`, `auth`, `profile`,
 `leaderboard`, `maps`, `weekly`, `queue`, `match_found`, `match_accepted`, `match_cancelled`, `match_start`,
 `match_resumed`, `connect`, `punch`, `relay`, `rooms`, `room`, `chat`, `friends`, `friend_request`, `presence`, `dm`,
 `dm_history`, `party`, `party_invite`, `party_invite_closed`, `party_chat`, `history`, `replay_chunk`,
-`replay_stored`, `result_recorded`, `error`.
+`replay_stored`, `result_recorded`, `banned`, `kicked`, `muted`, `unmuted`, `broadcast`, `report_filed`, `mod_report`,
+`mod_done`, `mod_reports`, `mod_bans`, `mod_mutes`, `mod_audit`, `mod_lookup`, `error`.
 
 A connection whose first line is `{"t":"relay","token":...}` becomes a byte pipe to its partner. On the UDP port the
 rendezvous takes `{"t":"reg","token","slot"}` and answers `{"t":"wait"}` until both sides are there, then

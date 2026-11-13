@@ -14,6 +14,7 @@ import { loadConfig } from "./config.mjs";
 import { createLogger } from "./log.mjs";
 import { CertWatcher } from "./tls.mjs";
 import { HealthServer } from "./health.mjs";
+import { grantConfigAdmins } from "./moderation.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { config: c, file } = loadConfig(process.argv.slice(2));
@@ -24,6 +25,7 @@ if (db !== ":memory:") mkdirSync(dirname(db), { recursive: true });
 log.event("info", "starting", { config: file || null, db, host: c.host, port: c.port, tls: c.tls.enabled, health: c.health.enabled ? `${c.health.host}:${c.health.port}` : null });
 
 const store = new Store(db, { accounts: c.accounts });
+grantConfigAdmins(store, c.moderation.admins, log);
 const catalog = loadMapCatalog(undefined, { includeTest: c.testMaps });
 let certs = null;
 if (c.tls.enabled) {
@@ -32,7 +34,7 @@ if (c.tls.enabled) {
   certs.start();
 }
 const mm = new Matchmaker({ store, catalog, host: c.host, port: c.port, minQueueMs: c.minQueueMs, ffaPlayers: c.ffaPlayers,
-  acceptMs: c.acceptMs, corroborationMs: c.corroborationMs, log, tls: certs, limits: c.limits, replays: c.replays, messages: c.messages });
+  acceptMs: c.acceptMs, corroborationMs: c.corroborationMs, log, tls: certs, limits: c.limits, replays: c.replays, messages: c.messages, moderation: c.moderation });
 await mm.start();
 let health = null;
 if (c.health.enabled) {

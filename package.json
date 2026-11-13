@@ -8,6 +8,6 @@
   "engines": { "node": ">=22.13" },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test --test-force-exit test/elo.test.mjs test/queue.test.mjs test/server.test.mjs test/golden.test.mjs test/host.test.mjs"
+    "test": "node --test --test-force-exit test/elo.test.mjs test/queue.test.mjs test/server.test.mjs test/golden.test.mjs test/host.test.mjs test/moderation.test.mjs"
   }
 }
